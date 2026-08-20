@@ -44,14 +44,48 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BENCH = os.path.dirname(HERE)
 
 # Attributes/kwargs whose numbers are presentation, not data.
-STYLE_KW = {"width", "height", "size", "row", "column", "col", "start_row", "end_row",
+STYLE_KW = {"width", "widths", "height", "size", "vsize", "space_after", "row", "column", "col", "start_row", "end_row",
             "start_column", "end_column", "row_offset", "col_offset", "indent",
             "left", "right", "top", "bottom", "rotation", "wrap_text", "shrink",
             "min_col", "max_col", "min_row", "max_row", "idx", "index", "anchor",
             "fgColor", "bgColor", "color", "font_size", "zoom", "scale"}
 STYLE_CALL = {"Font", "PatternFill", "Alignment", "Border", "Side", "Color",
               "get_column_letter", "range", "enumerate", "round", "len", "Inches",
-              "Pt", "Emu", "Cm", "RGBColor"}
+              "Pt", "Emu", "Cm", "RGBColor",
+              # This codebase's own layout helpers. Their arguments are column
+              # widths and header LABELS -- presentation, never measurements. The
+              # width idiom [40, 22, 24, 20, 16, 62] was the single largest source
+              # of false "hardcoded measurement" hits across every deck and
+              # workbook builder.
+              #
+              # ⚠ DELIBERATELY ABSENT: rows(). rows(ws, start, data) carries the
+              # actual table DATA, so excluding it would hide exactly what this
+              # checker exists to find. Adding a helper here must be justified by
+              # what it CARRIES, not by how noisy it is.
+              "header", "hdr", "W",
+              # pptx geometry helpers: tb(slide,x,y,w,h) and panel(slide,x,y,w,h)
+              # take nothing but inches. Every argument is layout.
+              "tb", "panel", "Inches", "Emu",
+              # matplotlib presentation. Figure sizes, font sizes, dpi, alpha, axis
+              # limits and grid styling are all layout. The DATA plotted by bar()/
+              # plot() arrives in variables, not literals, so those are left alone.
+              "subplots", "set_title", "set_xlabel", "set_ylabel", "set_ylim",
+              "set_xlim", "set_yscale", "set_xscale", "grid", "savefig", "legend",
+              "tick_params", "axhline", "axvline", "subplots_adjust", "tight_layout",
+              "set_xticks", "set_yticks", "set_xticklabels", "set_yticklabels"}
+
+# Calls where SOME positional arguments are layout and others are DATA. Blanket
+# exclusion would hide real numbers, so only the listed positions are skipped.
+#   put(tf, text, size, ...)                  -> arg 2 is a font size; arg 1 is TEXT
+#   bignum(slide, x, y, w, value, label, ...) -> args 1-3 are geometry; arg 4 is the VALUE
+# Found 2026-08-20: build_agentic_deck.py flagged 235 "hardcoded measurements" that
+# were almost entirely slide coordinates and font sizes. Excluding these calls whole
+# would have hidden bignum's value -- the one argument on a deck that IS a result.
+POSITIONAL_STYLE = {"put": {2}, "bignum": {1, 2, 3},
+                    # ax.text(x, y, s, ...) and ax.annotate(s, xy=...) -- the leading
+                    # numbers are axes coordinates. The STRING is still inspected,
+                    # because a label is exactly where a hardcoded figure hides.
+                    "text": {0, 1}}
 
 
 def declared_sources(src):
@@ -95,8 +129,46 @@ def opens_json(tree, src):
             if isinstance(node.value, ast.Name) and node.value.id == "json":
                 return True
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in ("read_json", "load_registry", "load_data"):
+            # load_figs is THIS CODEBASE'S actual loader (provenance.py:141) -- it
+            # opens the path, json.loads it, and RAISES on a missing file or an
+            # untagged figure. It was absent from this list, so 15 of 21 builders
+            # that genuinely read their sources were being reported as VIOLATION
+            # "never opens a JSON". The backlog read 30-to-fix when the true figure
+            # was far smaller.
+            #
+            # Found 2026-08-20 while converting builders: the second one on the list
+            # turned out to load its source on line 8. An inflated backlog is not a
+            # safe error -- it sends someone to "fix" code that is already correct,
+            # and 29% of this campaign's defects came from unnecessary fixes.
+            if node.func.id in ("read_json", "load_registry", "load_data", "load_figs"):
                 return True
+    return False
+
+
+def writes_json(tree, src):
+    """Does this module PRODUCE a json file rather than consume one?
+
+    Category error found 2026-08-20: builder_guard assumes every build_*.py consumes
+    data to render a deliverable. Some are MEASUREMENT SCRIPTS that produce it --
+    build_5090_adas_bench.py runs models on the GPU and json.dumps the results;
+    build_iq9_dualnsp_models.py compiles context binaries and writes their metadata.
+
+    Judging a producer by "does it read its declared source" is backwards: it declares
+    that file because it WRITES it. Both were reported as VIOLATION for not reading a
+    file they create, and their "hardcoded measurements" were input resolutions (224,
+    520, 640), iteration counts and unit conversions.
+
+    A producer is not exempt from scrutiny -- it is simply a different KIND of thing,
+    and the honest label is PRODUCER, not VIOLATION.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            f = node.func
+            name = getattr(f, "attr", None) or getattr(f, "id", None)
+            if name in ("dump", "dumps"):
+                v = getattr(f, "value", None)
+                if isinstance(v, ast.Name) and v.id == "json":
+                    return True
     return False
 
 
@@ -116,9 +188,32 @@ def suspicious_literals(tree):
                 if kw.arg in STYLE_KW:
                     continue
                 self.visit(kw.value)
-            for a in node.args:
+            skip = POSITIONAL_STYLE.get(name, set())
+            for i, a in enumerate(node.args):
+                if i in skip:
+                    continue
                 self.visit(a)
             self.stack.pop()
+
+        def visit_Subscript(self, node):
+            # A slice bound is syntax and a subscript KEY is an ADDRESS -- neither is
+            # a measurement. PRG["orin_tok_s"]["139"] hardcodes WHICH figure to read,
+            # not the figure itself; the value still comes from the source. Counting
+            # those as hardcoded data made every builder that correctly indexes its
+            # own records look like it was inlining them.
+            #
+            # This is a narrow exemption: only the key expression is skipped. The
+            # container and everything else is still walked.
+            self.visit(node.value)
+
+        def visit_Assign(self, node):
+            # Layout only: row_dimensions[r].height = 26, column_dimensions["A"].width = 34.
+            # These are presentation, and they made up the bulk of the flagged
+            # "measurements" in every deck and workbook builder.
+            tgt = node.targets[0] if node.targets else None
+            if isinstance(tgt, ast.Attribute) and tgt.attr in ("height", "width"):
+                return
+            self.generic_visit(node)
 
         def visit_Constant(self, node):
             if any(s in STYLE_CALL for s in self.stack):
@@ -126,7 +221,28 @@ def suspicious_literals(tree):
             v = node.value
             # Numbers hidden in strings ("349.5", "1,342 IPS") were invisible before.
             if isinstance(v, str):
-                m = re.fullmatch(r"\s*~?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*\w{0,6}\s*", v)
+                # The trailing group is a UNIT ("ms", "IPS", "fps", "%"), so it must
+                # not be able to absorb digits or superscripts. With \w{0,6} it did:
+                # the board name "5090" parsed as 509 + "0", and the input resolution
+                # "224²" as 224, so board identifiers and image sizes were being counted
+                # as hardcoded measurements. An inflated backlog is not a safe error --
+                # it makes the real work look bigger than it is and invites bulk edits.
+                # ⚠ \d{1,3} silently excluded EVERY 4+ digit figure without a
+                # thousands separator: "1198.3 IPS", "2072.2", "1458.0" were all
+                # invisible to this checker. Found 2026-08-20 by a negative control
+                # that a hardcoded 1198.3 in a chart label was NOT caught.
+                #
+                # The three accepted shapes, and why:
+                #   \d{1,3}(,\d{3})+   grouped -> "1,342"   unambiguously a quantity
+                #   \d+\.\d+           decimal -> "1198.3"  a bare integer that long
+                #                                            is usually an identifier,
+                #                                            but a DECIMAL that long
+                #                                            is a measurement
+                #   \d{1,3}            short   -> "296"
+                # A bare 4+ digit integer ("5090", "8550") stays excluded on purpose:
+                # those are part numbers, and shape alone cannot separate them from a
+                # 5090-IPS result. That is a known blind spot, stated rather than fixed.
+                m = re.fullmatch(r"\s*~?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d{1,3})\s*[a-zA-Z%/]{0,6}\s*", v)
                 if m:
                     try:
                         num = float(m.group(1).replace(",", ""))
@@ -161,8 +277,16 @@ def scan(path):
         return {"path": path, "status": "UNPARSEABLE", "detail": str(e)}
     decl = declared_sources(src)
     reads = opens_json(tree, src)
+    produces = writes_json(tree, src) and not reads
     lits = suspicious_literals(tree)
-    if not reads and lits:
+    if produces:
+        # Checked FIRST: a producer declares its file because it WRITES it, so
+        # "never opens its declared source" is the wrong question to ask of it.
+        status = "PRODUCER"
+        detail = (f"WRITES its data ({sorted(decl) or 'unnamed'}) rather than reading it — this is a "
+                  f"measurement script, not a deliverable builder. Judged by a different standard: it "
+                  f"must GATE and RECORD, not read.")
+    elif not reads and lits:
         status = "VIOLATION"
         detail = (f"declares {sorted(decl) or 'no source'} but never opens a JSON; "
                   f"{len(lits)} measurement-shaped literals hardcoded "
@@ -221,8 +345,15 @@ def main():
                        severity="fail")
     _log_event("gate_pass" if not bad else "gate_trip", tool="builder_guard",
                check="SUMMARY", n_fail=bad, n_scanned=len(results))
-    print(f"scanned {len(results)} builders; {bad} must be fixed before their "
-          f"deliverables can be trusted to reflect the data")
+    _viol = sum(1 for r in results if r["status"] == "VIOLATION")
+    _mixed = sum(1 for r in results if r["status"] == "MIXED")
+    # Report the two severities SEPARATELY. Lumping them produced a single
+    # "30 must be fixed" that read as 30 rewrites, when 22 of those already read
+    # their source and only carry stray literals. An inflated backlog sends someone
+    # to fix code that is already correct.
+    print(f"scanned {len(results)} builders; {_viol} NEVER read their declared source "
+          f"(full conversion needed), {_mixed} read it but still carry hardcoded "
+          f"literals (partial cleanup)")
     return 1 if bad else 0
 
 

@@ -61,6 +61,96 @@ def patterns(rec):
     return out
 
 
+def _line_anchor(text, m):
+    """Stable identity for the LINE a match sits on: sha1 of its whitespace-normalised
+    text. Line NUMBERS shift whenever anything above them is edited; the sentence does
+    not. And if the sentence IS edited, the anchor changes and any exemption keyed on
+    it lapses -- which is the behaviour we want, because a rewritten retraction has to
+    be re-read before it is trusted again.
+
+    This is the one place where hashing a sentence is the right tool: not to judge its
+    meaning, which no hash can do, but to detect that its meaning may have moved.
+    """
+    import hashlib
+    a = text.rfind("\n", 0, m.start()) + 1
+    b = text.find("\n", m.end())
+    line = text[a:b if b != -1 else len(text)]
+    return hashlib.sha1(" ".join(line.split()).encode()).hexdigest()[:16]
+
+
+def _reviewed(rec, path, anchor):
+    """True when a human has read THIS EXACT LINE and confirmed it is retraction prose.
+
+    Why an explicit registry rather than smarter prose detection: this checker's own
+    docstring records that keyword-sniffing was DEFEATED by a cell that said
+    "corrected" while asserting the dead value. Meaning cannot be inferred from the
+    words here. So the checker does not guess -- it demands that someone decided, on
+    the record, per site, with the sentence hashed so the decision expires if the
+    sentence changes.
+    """
+    import os
+    for e in rec.get("reviewed_retractions", []):
+        if os.path.basename(e.get("file", "")) == os.path.basename(path) \
+           and e.get("anchor") == anchor:
+            return True
+    return False
+
+
+def _is_commentary_in_code(path, text, m):
+    """A number in a Python COMMENT or DOCSTRING is commentary; the same number in
+    an ASSIGNMENT is an assertion.
+
+    Found 2026-08-20. void_check scans builders because "a builder assignment
+    asserts just as hard as a spreadsheet cell" -- correct. But it also flagged
+    numbers inside comments that EXIST TO RECORD THE RETRACTION: the colleague
+    builder's "...is exactly how the fabricated 349.5 IPS entered this corpus", and
+    a docstring listing "the MEASURED dual-NSP 1198.3 (NOT the fabricated 1,342 x2)".
+    Flagging the note that documents a correction is the surest way to get the note
+    deleted.
+
+    STRUCTURAL, not keyword-based: it asks where in the SYNTAX the number sits, never
+    what words surround it. The trap that defeated keyword matching -- a cell saying
+    "corrected" while asserting a dead value -- is unaffected, because an assignment
+    is still an assignment whatever words it carries.
+    """
+    if not path.endswith(".py"):
+        return False
+    line_start = text.rfind("\n", 0, m.start()) + 1
+    if "#" in text[line_start:m.start()]:
+        return True
+    head = text[:m.start()]
+    return (head.count('"""') % 2 == 1) or (head.count("'''") % 2 == 1)
+
+
+def _inside_identifier(text, m):
+    """True when the matched digits are a SUBSTRING of a hash, filename or identifier.
+
+    Found 2026-08-20: the dead value 1342 matched inside the ONNX md5 `822e420d1342`
+    in a dossier that was quoting the hash for measurand identity. The lookbehind
+    only excluded a preceding DIGIT, and `d` is a hex letter. Measurand identity now
+    requires hashes everywhere, so this false positive would recur across the corpus
+    and is exactly the kind of noise that gets a checker tuned until it is quiet.
+
+    The test is structural, not a keyword: expand to the full alphanumeric token and
+    reject only if that token is LONGER than the match and contains a letter. A bare
+    "1342", "1342 IPS", "**1342**" or "1342x" is still a hit.
+    """
+    a = m.start()
+    while a > 0 and (text[a-1].isalnum() or text[a-1] == "_"):
+        a -= 1
+    b = m.end()
+    while b < len(text) and (text[b].isalnum() or text[b] == "_"):
+        b += 1
+    tok = text[a:b]
+    if len(tok) == m.end() - m.start():
+        return False
+    # a trailing unit or multiplier is not an identifier: 1342x, 1342ms, 1342W
+    tail = text[m.end():b]
+    if tok[:m.start()-a] == "" and len(tail) <= 3 and tail.isalpha():
+        return False
+    return any(c.isalpha() for c in tok)
+
+
 def scan_pptx(path, recs):
     """A deck is a deliverable. It reaches more readers than the workbook does."""
     try:
@@ -102,6 +192,13 @@ def scan_text(path, recs):
     for rec in recs:
         for pat in patterns(rec):
             for m in pat.finditer(text):
+                if _inside_identifier(text, m):
+                    continue
+                if _is_commentary_in_code(path, text, m):
+                    continue
+                _anch = _line_anchor(text, m)
+                if _reviewed(rec, path, _anch):
+                    continue
                 line = text.count("\n", 0, m.start()) + 1
                 ctx = text[max(0, m.start() - 70):m.start() + 70].replace("\n", " ")
                 # An .md table row or a builder assignment asserts just as hard as
@@ -110,7 +207,11 @@ def scan_text(path, recs):
                 line_txt = text[text.rfind("\n", 0, m.start()) + 1:
                                 (text.find("\n", m.end()) + 1 or len(text))]
                 hits.append((rec, f"{path}:{line}", ctx, _asserts(rec, line_txt)))
-                break
+                # NOT `break`. Reporting only the FIRST occurrence per value per file
+                # turned every fix into whack-a-mole: correcting one site revealed the
+                # next, and the reported total was an UNDERCOUNT that shrank more slowly
+                # than the work being done. Found 2026-08-20 when fixing build_o6_xls.py
+                # line 66 surfaced an untouched "349.5 fps" table row at line 174.
     return hits
 
 

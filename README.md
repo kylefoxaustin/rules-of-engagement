@@ -36,7 +36,7 @@ from a model producing garbage is worth nothing, and it is worth *less* than not
 
 ## What this is
 
-A harness plus 45 rules of engagement, 11 checker programs, and 19 harness
+A harness plus 45 rules of engagement, 11 checker programs, and 20 harness
 programs, for the situation where **an AI agent is running your benchmarks unattended** and you have
 to decide whether to believe the report it hands you.
 
@@ -83,9 +83,9 @@ Run the checkers against a deliverable you already have. **Expect it to hurt** �
 |---|---|
 | `PROMPT.md` | the starter prompt — paste into your agent |
 | `RULES.md` | 45 rules, each citing the defect that motivated it |
-| `FAILURES.md` | 26 failures, in detail, with how each was caught |
+| `FAILURES.md` | 31 failures, in detail, with how each was caught |
 | `checkers/` | 11 programs that read finished artifacts and refuse to pass them |
-| `harness/` | 19 programs that run at measurement time — gates, porch protocol, samplers |
+| `harness/` | 20 programs that run at measurement time — gates, porch protocol, samplers |
 | `schema/` | the record format a measurement must satisfy to be quotable |
 | `adversarial/` | how to run the audit, and the passes that beat us |
 | `verify.sh` | the single entry point; runs everything and returns a verdict |

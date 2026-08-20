@@ -210,6 +210,48 @@ direction. Separately, a textbook pointer-chase read **2.02 ns instead of 4.0** 
 sequence-learning prefetcher hid L2 entirely below a 512 KiB footprint.
 **Only a performance counter inside the timed region separates these cases.** Wall-clock cannot.
 
+---
+
+## Class 8 — the checker's own question did not fit the thing it asked
+
+*All five found in a single day, while USING the checkers rather than reviewing them. Every one
+inflated the reported work in the direction of "go change correct code".*
+
+### A backlog of "30 builders to fix" was really 6
+The check for "does this builder read its declared data source" looked for `json.load`, `read_json`,
+`load_registry` or `load_data`. The codebase's actual loader was named `load_figs`. **15 of 21
+reported violations were builders that read their sources correctly**, via a function missing from a
+hand-maintained list.
+
+### Measurement scripts were reported for not reading files they CREATE
+Two remaining "violations" were benchmark harnesses that run models and write their results. They
+declared a JSON path because they *produce* it. The checker had one category — "builder" — and asked a
+consumer's question of a producer.
+
+### Slide coordinates counted as hardcoded measurements
+A deck builder flagged **235** literals; nearly all were textbox coordinates and font sizes. The fix
+needed positional awareness, not blanket exclusion: in `bignum(slide, x, y, w, value, label)` the
+geometry is arguments 1–3 and the RESULT is argument 4. Excluding the call wholesale — the obvious fix
+— would have hidden the only number on the slide that mattered.
+
+### The noise was hiding real defects
+With 214 coordinates removed from that file, three hardcoded corpus statistics became visible:
+*"53 deliverables (34 reports · 14 workbooks · 5 decks)"* and *"111 data files"* — in a deck about
+measurement discipline, when the tree held 55 (35 · 14 · 6) and 229. **A noisy checker does not merely
+waste attention, it conceals its own true positives.**
+
+### The string matcher could not see a 4-digit figure
+Found by a negative control, not by reading. The pattern accepted `\d{1,3}` with optional thousands
+groups, so any figure of four or more digits without a comma — `1198.3 IPS`, `2072.2`, `1458.0` — could
+not match at all. It had been reporting on strings for weeks while structurally unable to see a large
+class of them.
+
+**The lesson is not "check your regexes."** A checker encodes an assumption about the SHAPE of what it
+inspects, and that assumption rots exactly like a measurement does. Ours were wrong about the loader's
+name, about what a builder IS, about which arguments carry data, and about how many digits a number
+has. **Write negative controls: in one day they caught more real defects here than reading the code
+did.**
+
 ## What we would tell you to do first
 
 1. **Gate output in the same run as timing.** Everything else is cheaper than this and matters less.

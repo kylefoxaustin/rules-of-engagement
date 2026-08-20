@@ -62,12 +62,47 @@ def _git_sha() -> str:
         return ""
 
 
+# ── A/B ARM ───────────────────────────────────────────────────────────────────
+# Every event carries the arm it was produced under. Without this the log measures
+# only what happens WITH the harness, which cannot answer the question the harness
+# exists to answer. The 2196 events predating this change were not randomised and
+# are backfilled as "n/a" -- deliberately NOT as "treatment", because pooling
+# unrandomised history with a real treatment arm is the same mixed-tier comparison
+# this whole programme exists to prevent.
+#
+#   BENCH_ARM=control    gates DISABLED, held-out slice only, never ships
+#   BENCH_ARM=treatment  full harness
+#   BENCH_ARM unset      -> "n/a"
+#
+# BENCH_TASK_ID is the randomisation unit -- (board, model, precision, batch,
+# metric) -- and must be IDENTICAL across the two arms of one pair, or they cannot
+# be joined at analysis time.
+def _arm() -> str:
+    a = os.environ.get("BENCH_ARM", "n/a").strip().lower()
+    return a if a in ("control", "treatment", "n/a") else "n/a"
+
+
+def log_ab_run(task_id: str, arm: str, *, gates_enabled: bool,
+               manipulation_ok: bool, detail: str = "") -> None:
+    """Emit once per arm per task. `manipulation_ok` is the CHECK, not a hope:
+    for the control arm it asserts the agent never read the rules doc and never
+    invoked a checker. An arm that silently self-gated is a NON-EXPERIMENT and
+    looks exactly like 'the harness does nothing' -- so a False here invalidates
+    the pair rather than contributing a null result."""
+    log_event("ab_run", task_id=task_id, arm=arm, gates_enabled=gates_enabled,
+              manipulation_ok=manipulation_ok, detail=detail,
+              severity="fail" if not manipulation_ok else "info")
+
+
 def log_event(event_type: str, **fields) -> None:
     """Append one event. Never raises -- instrumentation must not break a run."""
     try:
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
         rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-               "type": event_type, "git": _git_sha(), **fields}
+               "type": event_type, "git": _git_sha(),
+               "arm": fields.pop("arm", None) or _arm(),
+               "task_id": fields.pop("task_id", None) or os.environ.get("BENCH_TASK_ID", ""),
+               **fields}
         with open(LOG, "a") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
@@ -103,6 +138,22 @@ def summary() -> int:
     by_type: dict[str, int] = {}
     for e in ev:
         by_type[e["type"]] = by_type.get(e["type"], 0) + 1
+    by_arm: dict[str, int] = {}
+    for e in ev:
+        by_arm[e.get("arm", "n/a")] = by_arm.get(e.get("arm", "n/a"), 0) + 1
+    print("\nEvents by ARM:")
+    for k in sorted(by_arm):
+        print(f"  {k:12s} {by_arm[k]:5d}")
+    if by_arm.get("control", 0) == 0:
+        print("  \u26a0  NO CONTROL ARM. The escape-rate comparison CANNOT be computed.")
+        print("     Every event here is treatment or pre-experiment history. This is the")
+        print("     paper's headline number and it is prospective-only -- see the A/B")
+        print("     section of CORPUS_REDO_ROADMAP.md.")
+    bad = [e for e in ev if e.get("type") == "ab_run" and e.get("manipulation_ok") is False]
+    if bad:
+        print(f"  \U0001f6d1 {len(bad)} ab_run(s) FAILED their manipulation check -- those pairs are")
+        print("     non-experiments and must be EXCLUDED, not reported as null results.")
+
     print("\nEvents by type:")
     for k in sorted(by_type):
         print(f"  {k:16s} {by_type[k]:5d}   {EVENT_TYPES.get(k, '')}")

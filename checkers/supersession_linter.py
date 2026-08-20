@@ -110,6 +110,38 @@ def deliverables():
     return files
 
 
+# ── reviewed value-collisions ────────────────────────────────────────────────
+# A bare number is not a measurand. This linter matches VALUES, so it cannot tell
+# the Orin yolov8n batch-scaling "22.4%" from "Phi-3-mini 3.8B = +22.4% full" in a
+# passage about layer-skipping. Same class as void_check's "47.6" matching both the
+# O6 4-task ms figure and an unrelated "host TAX 47.6%".
+#
+# Exemptions are per LINE and keyed on the sha1 of the whitespace-normalised line, so
+# editing the sentence lapses the exemption and forces a re-read. Stored beside the
+# void register so both checkers' human decisions live in one auditable place.
+COLLISIONS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "..", "campaign", "reviewed_collisions.json")
+
+
+def _reviewed_collisions():
+    try:
+        return json.load(open(os.path.normpath(COLLISIONS)))
+    except Exception:
+        return {"entries": []}
+
+
+def _collision_ok(rel, val, text, start):
+    import hashlib
+    a = text.rfind("\n", 0, start) + 1
+    b = text.find("\n", start)
+    line = text[a:b if b != -1 else len(text)]
+    anch = hashlib.sha1(" ".join(line.split()).encode()).hexdigest()[:16]
+    for e in _reviewed_collisions().get("entries", []):
+        if os.path.basename(e.get("file","")) == os.path.basename(rel) \
+           and str(e.get("value")) == str(val) and e.get("anchor") == anch:
+            return True
+    return False
+
 def main():
     sup = collect_superseded()
     if not sup:
@@ -131,7 +163,8 @@ def main():
             if not s:
                 continue
             # word-boundary-ish match so 2.53 does not hit inside 12.531
-            if re.search(rf"(?<![\d.]){re.escape(s)}(?![\d])", text):
+            _m = re.search(rf"(?<![\d.]){re.escape(s)}(?![\d])", text)
+            if _m and not _collision_ok(os.path.relpath(path, RESULTS), val, text, _m.start()):
                 found.append((val, origins[0]))
         if found:
             rel = os.path.relpath(path, RESULTS)
