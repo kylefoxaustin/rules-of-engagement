@@ -133,6 +133,42 @@ bytes.* That is why class 3 needs a different verifier, and why `checkers/prose_
 
 ---
 
+---
+
+## Does any of this actually work? We ran the experiment. The answer is "we could not tell."
+
+In August 2026 we ran a pre-registered, blinded A/B test of this harness: 12 matched benchmarking tasks
+across four boards, each done twice — once by an operator given these rules and checkers, once by an
+operator given only the task. A third, blinded reviewer scored the write-ups for defects.
+
+| | without the harness | with it |
+|---|---:|---:|
+| defects found | 4 | 2 |
+| defects per report | 0.36 | 0.18 |
+| **cost** | **1×** | **2.4× the tokens** |
+
+**Paired sign test: p = 1.000.** Three pairs favoured the harness, two favoured the control, six tied.
+
+**And the experiment could not have detected an effect if one existed.** At a base rate of 0.36
+defects per report most pairs tie; only five carried any signal, and a sign test on five discordant
+pairs cannot reach p < 0.05 however they split. We fixed the sample size before knowing the base rate.
+That is a design error, and it is ours.
+
+So: **we cannot claim this harness reduces defects.** We also cannot claim it does not — a null from an
+underpowered test is not evidence of absence. What we can say is that on small, well-specified tasks,
+competent operators produced few defects either way, and this harness cost 2.4× the effort with no
+demonstrated benefit *at that scale of task*.
+
+**Read `adversarial/AB_EXPERIMENT.md` for the full result, including the three protocol failures we
+committed while running it** — an invented identifier, a mid-experiment protocol deviation that biased
+toward our own hypothesis, and an entire arm we lost for four hours. All three were caught by
+mechanisms, none by attention. That is the most honest argument for mechanising this that we have.
+
+**What the experiment did produce** is `FAILURES.md` class 7 — four separate cases of a compiler
+deleting a benchmark and returning a fast, plausible number. **Two were found by operators who did not
+have these rules.** That is why M45 exists, and it is a fair warning about what else these rules do not
+yet cover.
+
 ## Caveats — read these before trusting anything here
 
 - **These rules will rot.** They encode toolchain behaviours from a specific window in 2026. Some will

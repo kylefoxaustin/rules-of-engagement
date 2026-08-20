@@ -166,6 +166,50 @@ inside each. The three rebuilds were not independent samples; they selected the 
 
 ---
 
+---
+
+## Class 7 — the instrument was deleted before it ran
+
+*Found in a controlled experiment, 2026-08-20: four independent incidents on four different boards in
+a single afternoon. This is not an occasional hazard. On this evidence it is the modal failure mode of
+hand-written microbenchmarking.*
+
+### GCC -O2 deleted an entire pointer-chase loop, and the result was quotable
+A plain-C L2 latency benchmark compiled to **zero instructions between the two `clock_gettime` calls**.
+The compiler could see the chase result was unused and removed it.
+**Survived because** nothing about it looks wrong. It compiles, it links, it runs, it prints a number,
+and the number is a plausible L2 latency. Unlike the constant-fold below, there is no absurd magnitude
+to notice.
+**Caught by** disassembling the binary and asserting `16x ldr x0,[x0]` was present. Rewritten as inline
+asm. → This is why "the source contains a loop" is not evidence the loop ran.
+
+### A `memchr` bandwidth loop was constant-folded and reported 14,000,000,000 MB/s
+The compiler proved the buffer was all 1s and folded the search away.
+**Caught by** the magnitude being absurd — which is luck, not method. A loop over a buffer the compiler
+*cannot* predict would have folded less completely and produced a merely-too-good number.
+
+### Warm-up and pilot chases dead-code-eliminated
+Their results were unused, so they vanished — silently changing the cache state the timed region ran in.
+The timed loop survived; its *preconditions* did not.
+
+### An elided-loop negative control ran at 3.5e10 MB/s
+Deliberately broken as a control, and its speed is the signature: **a loop that no longer exists is
+infinitely fast.**
+
+**Direction:** one-signed and severe. A compiler removing work always makes the machine look faster.
+There is no optimisation that invents work.
+
+**Two of these four were found by operators working WITHOUT this repo's rules**, by disassembling and by
+noticing impossible magnitudes — neither of which the rules mandated at the time. The harness was blind
+to its own instrument. That is why M45 exists.
+
+### The hardware does it too
+A deliberately-broken bandwidth loop failed its checksum gate but was **not faster** — the prefetcher
+streamed the lines the loop skipped, so the defect cost no time and was invisible to timing in *either*
+direction. Separately, a textbook pointer-chase read **2.02 ns instead of 4.0** because a
+sequence-learning prefetcher hid L2 entirely below a 512 KiB footprint.
+**Only a performance counter inside the timed region separates these cases.** Wall-clock cannot.
+
 ## What we would tell you to do first
 
 1. **Gate output in the same run as timing.** Everything else is cheaper than this and matters less.

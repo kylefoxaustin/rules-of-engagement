@@ -790,6 +790,39 @@ text has been read *in every rendered artifact that carries it*. Concretely:
 The failure direction is consistent and worth naming: an unrendered fix always makes the document look
 *more* correct than it is, because the changelog records the intent and the artifact keeps the defect.
 
+**M45 — Verify that the work is present in the EMITTED CODE. A benchmark the compiler deleted is infinitely fast, and the number it returns is not absurd unless you look.**
+Found by the A/B experiment of 2026-08-20, in which four independent arms on four boards hit this in
+one afternoon. It is the founding law (M31) one layer below where we had been looking: M31 says a model
+must be shown to produce correct output, but says nothing about whether the *measurement harness* still
+contains the work it claims to time.
+
+1. **The whole loop deleted.** A plain-C pointer chase compiled at `-O2` left **zero instructions**
+   between the two `clock_gettime` calls. It would have returned a fast, perfectly quotable L2 latency.
+   Caught by disassembling and requiring `16x ldr x0,[x0]` to be present.
+2. **Constant-folded.** A `memchr` bandwidth loop was folded away because the compiler could prove the
+   buffer was all 1s. It reported **14,000,000,000 MB/s** — caught only because that is absurd.
+3. **Warm-up eliminated.** Warm-up and pilot chases removed because their results were unused, silently
+   changing the cache state the timed region ran in.
+4. **An elided-loop negative control** clocked **3.5e10 MB/s** — the signature of a loop that no longer
+   exists.
+
+**The rule.** For any hand-written microbenchmark, prove the work survived compilation:
+- **disassemble** and assert the expected instructions are present, or
+- use an **optimisation barrier** on the accumulated value, or
+- **gate on a value the compiler cannot constant-fold** — a closed-form checksum of data it cannot
+  predict, verified in the same run as the timing.
+
+*"The source contains a loop"* is not evidence the loop ran. Neither is "it compiled", "it linked", or
+"it produced a number".
+
+**Direction:** one-signed, and severely. A compiler removing work always makes the machine look faster;
+there is no optimisation that invents work. Case 1 above is the worst kind — the result was **not**
+absurd, so nothing would have flagged it.
+
+**Two of the four incidents were found by arms with no rules document and no checkers**, by disassembling
+and by noticing impossible magnitudes. Neither behaviour was mandated by this document at the time. That
+is why this rule exists: the harness was blind to its own instrument.
+
 ---
 
 ## AMENDMENT

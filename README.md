@@ -36,7 +36,7 @@ from a model producing garbage is worth nothing, and it is worth *less* than not
 
 ## What this is
 
-A harness plus 44 rules of engagement, 10 checker programs, and 19 harness
+A harness plus 45 rules of engagement, 11 checker programs, and 19 harness
 programs, for the situation where **an AI agent is running your benchmarks unattended** and you have
 to decide whether to believe the report it hands you.
 
@@ -82,9 +82,9 @@ Run the checkers against a deliverable you already have. **Expect it to hurt** �
 | path | what it is |
 |---|---|
 | `PROMPT.md` | the starter prompt — paste into your agent |
-| `RULES.md` | 44 rules, each citing the defect that motivated it |
-| `FAILURES.md` | 21 failures, in detail, with how each was caught |
-| `checkers/` | 10 programs that read finished artifacts and refuse to pass them |
+| `RULES.md` | 45 rules, each citing the defect that motivated it |
+| `FAILURES.md` | 26 failures, in detail, with how each was caught |
+| `checkers/` | 11 programs that read finished artifacts and refuse to pass them |
 | `harness/` | 19 programs that run at measurement time — gates, porch protocol, samplers |
 | `schema/` | the record format a measurement must satisfy to be quotable |
 | `adversarial/` | how to run the audit, and the passes that beat us |
@@ -132,6 +132,42 @@ who ran this put it: *you can hash a file; you cannot hash a sentence — its me
 bytes.* That is why class 3 needs a different verifier, and why `checkers/prose_integrity.py` exists.
 
 ---
+
+---
+
+## Does any of this actually work? We ran the experiment. The answer is "we could not tell."
+
+In August 2026 we ran a pre-registered, blinded A/B test of this harness: 12 matched benchmarking tasks
+across four boards, each done twice — once by an operator given these rules and checkers, once by an
+operator given only the task. A third, blinded reviewer scored the write-ups for defects.
+
+| | without the harness | with it |
+|---|---:|---:|
+| defects found | 4 | 2 |
+| defects per report | 0.36 | 0.18 |
+| **cost** | **1×** | **2.4× the tokens** |
+
+**Paired sign test: p = 1.000.** Three pairs favoured the harness, two favoured the control, six tied.
+
+**And the experiment could not have detected an effect if one existed.** At a base rate of 0.36
+defects per report most pairs tie; only five carried any signal, and a sign test on five discordant
+pairs cannot reach p < 0.05 however they split. We fixed the sample size before knowing the base rate.
+That is a design error, and it is ours.
+
+So: **we cannot claim this harness reduces defects.** We also cannot claim it does not — a null from an
+underpowered test is not evidence of absence. What we can say is that on small, well-specified tasks,
+competent operators produced few defects either way, and this harness cost 2.4× the effort with no
+demonstrated benefit *at that scale of task*.
+
+**Read `adversarial/AB_EXPERIMENT.md` for the full result, including the three protocol failures we
+committed while running it** — an invented identifier, a mid-experiment protocol deviation that biased
+toward our own hypothesis, and an entire arm we lost for four hours. All three were caught by
+mechanisms, none by attention. That is the most honest argument for mechanising this that we have.
+
+**What the experiment did produce** is `FAILURES.md` class 7 — four separate cases of a compiler
+deleting a benchmark and returning a fast, plausible number. **Two were found by operators who did not
+have these rules.** That is why M45 exists, and it is a fair warning about what else these rules do not
+yet cover.
 
 ## Caveats — read these before trusting anything here
 

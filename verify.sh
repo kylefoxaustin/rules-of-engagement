@@ -23,6 +23,9 @@ done
 # original loop piped to `tail` and never consulted PIPESTATUS. It also ran zero
 # times, because campaign/records/ does not exist -- a silently-skipped check that
 # reports success is worse than no check.
+echo ""
+echo "── frozen_guard — shipped artifacts have not silently diverged"
+python3 tools/frozen_guard.py || true
 printf "\n── record_schema — measurement records defend themselves\n"
 if ls campaign/records/*.json >/dev/null 2>&1; then
   for f in campaign/records/*.json; do
