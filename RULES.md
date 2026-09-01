@@ -99,11 +99,65 @@ you are about to repeat.
 
 **M1 — The output gate ships with the number, or neither ships.**
 Any timing of a model must be accompanied by evidence, produced by *the same artifact in the same
-session*, that the model computed something *correct*. Never a proxy from Class A.
+**invocation***, that the model computed something *correct*. Never a proxy from Class A.
+
+> **TIGHTENED 2026-08-25: "same session" → "same invocation."** The original wording was *same
+> session*, and it is too loose to do the job. The Orin int8 incident had a detection gate in the
+> toolchain and a timing path that never called it — a gate run anywhere in the same *session*
+> against a different artifact would have satisfied the old wording while proving nothing about the
+> engine that produced the number. Two artifacts one token apart in filename
+> (`yolov8n.int8.engine` / `yolov8n_cal.int8.engine`), both genuinely INT8, one detecting nothing:
+> only a gate bound to the *same invocation* distinguishes them. Note what this does NOT change: the
+> Orin number violated the old wording too, because no gate ran at all.
 - Detector → detection count, max score, and class plausibility for a known image.
 - LLM/VLM → a gradeable answer obtainable **only** from the supplied input.
 - VLA → trajectory sanity against a reference.
-> **CHECK:** the result record contains a `gate` object with a pass/fail and the observed values. No gate object → the number does not exist.
+> **CHECK:** the result record contains a `gate` object with a pass/fail and the observed values, and
+> that gate ran in the SAME invocation against the SAME artifact. No gate object → the number does not
+> exist. **Mechanised by `bench_data/tools/run_gate.py`**, which scores predictions against ground
+> truth and stamps the verdict with the `artifact_md5` it judged; `emit_records.py` refuses a gate
+> whose `artifact_md5` does not match the artifact being timed. That binding exists because a
+> reviewer once dropped a resnet50 evidence file into the pipeline and it inherited yolov8l's COCO
+> PASS verbatim — a fully "defensible" record for a model that had never been gated.
+>
+> *On documents written before the tightening:* several say a gate ran "in the same **session**, on
+> the same artifact". That wording no longer demonstrates compliance on its face. It is not
+> automatically a violation — the frozen colleague deliverable, for instance, carries that sentence
+> and then states two lines later that all 16/16 engines were re-scored *in the same invocation as
+> their timing* (2026-08-20), which satisfies the tightened rule in substance. Check the substance
+> before rewriting the sentence, and **do not edit a frozen artifact to fix wording** — a shipped
+> document is a snapshot in someone else's hands (see `campaign/FROZEN.json`).
+
+> **AMENDED 2026-08-25 — the ungated-legacy clause, because the tightening created a debt and
+> pretending otherwise would be the worse defect.** Tightening M1 to *same invocation* instantly put
+> a set of already-published numbers on the wrong side of it: the GenAI decode rates (Orin eager /
+> Orin compiled / iq9 QNN w4a16, re-measured 2026-07-16) are timings of models with **no
+> output-correctness gate at all** — the harness reports tok/s and never looks at the generated text.
+> Read strictly, M1 says those numbers do not exist. They do exist, they are in a shipped deck, and
+> deleting them silently would be a worse outcome than saying so.
+>
+> So: **a timing with no output gate is not MEASURED for comparison purposes. It is
+> `[MEASURED, UNGATED]`, and it carries the same restriction as DERIVED — it may be reported,
+> labelled, never placed bare beside a gated MEASURED number, and never in a headline.** Every such
+> figure is listed in `bench_data/campaign/ungated_timings.json` with the gate it owes. The register
+> is the point: an exemption that is not enumerated is not an exemption, it is an erosion.
+>
+> ⚠️ **And it must be GENERATED, not hand-listed.** The first version of that register was written
+> by hand, listed **11** figures, and asserted "Every such figure is listed". A generated sweep
+> (`bench_data/tools/ungated_check.py`, in the pre-send gate) finds **84** — every llama.cpp decode
+> figure, the whole iq9 qwen ladder, the ARA240 7B number taken with the random-input trick, the
+> prefill and e2e families — and **zero** gated among them. A hand-listed exemption enumerates
+> whatever its author remembered; this one enumerated a fifth of its own debt while claiming
+> completeness, which is *worse than no register*, because it reads as a bound. M44 says generate
+> counts rather than typing them; a register is a count of a set.
+>
+> *Limit of the check, stated:* it is a SOURCE-side test — it asks whether the cited raw record
+> contains a gate object at all, not whether that gate was bound to the same invocation, which is
+> what M1 actually requires. It therefore **under-reports the debt and never over-reports it**.
+>
+> This is not a loophole for new work. A NEW timing ships with its gate or it does not ship. The
+> clause exists to make an existing debt visible and finite, and the register is how you can tell
+> whether it is shrinking.
 
 **M2 — Prove the gate can fail.**
 Once per harness per session, run it against a deliberately broken artifact (needle removed, weights
@@ -670,8 +724,8 @@ Every measurement emits this. If a field cannot be filled, the number is not pub
   "value": 0.657227, "unit": "ms", "provenance": "MEASURED",
   "what": "yolov8n batch-1 fp16 GPU compute median",
   "host": "thor", "utc": "2026-08-16T08:49:35Z",
-  "artifact": {"path": "/home/kyle/acc/yolov8n_b1.fp16.engine", "md5": "..."},
-  "log": "/home/kyle/acc/thor_perf_20260816T084935Z.log",
+  "artifact": {"path": "/home/researcher/acc/yolov8n_b1.fp16.engine", "md5": "..."},
+  "log": "/home/researcher/acc/thor_perf_20260816T084935Z.log",
   "config": {"requested": {...}, "measured": {...}},
   "gate": {"status": "PASS", "observed": "59 det >0.25, max 0.9272", "negative_control": "verified failing 2026-08-16"},
   "tenancy": {"accel_util_pct": 0, "top_rss": "...", "power_mode": "MAXN", "tj_c": 41.5},
@@ -823,7 +877,933 @@ absurd, so nothing would have flagged it.
 and by noticing impossible magnitudes. Neither behaviour was mandated by this document at the time. That
 is why this rule exists: the harness was blind to its own instrument.
 
+**M46 — Predict what CORRECT looks like before you measure. A gate with a threshold you guessed can only catch the failures you imagined.**
+Found 2026-08-20 on the IQ-9075, and it nearly cost a published claim.
+
+A generic MatMul with signed int8 Q/DQ was compiled by QNN into an **UNSIGNED**
+`QNN_DATATYPE_UFIXED_POINT_8` with zero-point 0 — clipping **every negative activation to zero** and
+destroying half the input distribution. The converter succeeded. The context binary built. The graph
+ran. The output had the right shape, a plausible magnitude, and no all-zero tensor.
+
+**And the timing was identical.** The run with catastrophically wrong quantisation and the run with
+correct scales differ by **0.4%** (758 vs 755 µs). This is not "broken is faster" — it is *broken is
+exactly the same speed*, which is worse, because there is no anomaly to notice. Timing cannot see this
+defect in either direction.
+
+**What caught it was arithmetic done in advance.** Before running, simulate the operation at the
+intended precision and compute the accuracy a CORRECT implementation should achieve. Here that
+prediction was cosine **0.999877**. The measurement returned **0.710964**.
+
+**A generic threshold would have passed it.** "cosine > 0.7" — a number that sounds strict — accepts
+this result. The gate worked only because the expected value was computed first, from the same inputs,
+rather than chosen because it felt demanding.
+
+**And the prediction identifies the MECHANISM, not just the failure.** Simulating the suspected fault —
+activations clipped to unsigned — reproduced the measured output at cosine **1.000000**. That is the
+difference between "something is wrong" and "the converter dropped the sign bit": the first is a
+caveat, the second is a bug report.
+
+**The rule.** For any quantised or reduced-precision run:
+- compute the expected accuracy by simulating that precision on the host, from the same inputs;
+- gate against THAT number, not a round one;
+- when it fails, simulate the suspected mechanism and require the simulation to match the measurement
+  before naming a cause.
+
+**Corollary — a silent precision downgrade is invisible to every check except output.** Not to the
+build, not to the logs, not to the tensor shapes, not to the clock. See M31 and M45; this is the same
+family, and it is the member with no timing signature at all.
+
 ---
+
+## AMENDMENT
+
+This document is amended by *finding a new way to be wrong*, not by opinion. Adding a rule requires
+citing the defect that motivated it, in the Failure Register, with evidence. Rules are never removed
+because they are inconvenient — only when the failure mode they prevent has become structurally
+impossible (e.g. mechanised away).
+
+---
+
+**M47 — When you compare a fresh measurement against a published one, name the CELL you compared against. A sound measurement can still produce a false verdict.**
+Found 2026-08-21, in my own re-measure record, hours after writing it.
+
+`fleet_triad_2026-08-21.json` recorded two defects that did not exist:
+
+    "o6_aggregate":   {"published": 27.6, "measured": 40.749, "verdict": "UNRECONCILED (48%)"}
+    "orin_aggregate": {"published": 43.0, "measured": 61.309, "verdict": "UNRECONCILED (43%)"}
+
+The O6 dossier's table header reads `| Benchmark | 1-thread | multi-thread | fleet context |`.
+So **27.6 is the SINGLE-thread cell** — I compared it against my *aggregate*. And **43.0 is O6's
+multi-thread cell** — not an Orin figure at all. Paired correctly, three of four agree within 5.2%:
+O6 1t −3.5%, O6 agg −5.2%, imx95 agg +0.4%. The corpus was right; my verdict manufactured two
+phantom defects and put "UNRECONCILED" into two builders before I caught it.
+
+**Every measurement-class control passed.** The binary was fingerprinted (md5
+`cf3426083a4ae1b51fb8ae3f78d07573`), the checksum was exact (M46 — 74666662.0 on all 8 runs), the
+emitted code was disassembled (M45). Nothing about the *measurement* was wrong. This is the
+**RELATION** class — number against number — and reproduction cannot detect it, because repeating a
+correct measurement reproduces the same correct number and the same wrong comparison.
+
+It is also the *inverse* of the usual failure. The rest of these rules exist because a number was
+too good; this one exists because a verdict was too harsh. **A checker that manufactures false
+defects is not "safely conservative" — it spends the same credibility as a missed one, and it
+pushes real deliverables toward wrong values.** I had already edited two builders.
+
+*The rule:* any record citing a published value must carry a sibling field naming its origin — a
+cell, a column, a table, or `file#key`. Naming it is what makes a mispairing visible, to the next
+reader and to the author. Enforced by `tools/comparison_pairing.py`; it found **24** unpaired claims
+on first run, including every record I had written that day.
+
+*Corollary:* read the table HEADER, not the value ordering you assumed. Both errors here were
+column-position guesses that a two-second look at the header would have refuted.
+
+---
+
+**M48 — A ZERO IS A CLAIM ABOUT THE HARNESS UNTIL A POSITIVE CONTROL SAYS OTHERWISE. Never record a
+null, zero, or degenerate result without a same-harness control that produced a non-null one.**
+
+Earned across 2026-08-23 and 2026-08-24, four times in three different tools. (An earlier draft of
+this rule said "three times in one day"; instances 1 and 2 are dated 2026-08-23 in
+`xboard_quant/XBOARD_QUANTIZER_RESULT.json` and instance 3 on 08-24. The compressed arc was
+narrative, and a rules document that demands cited evidence may not itself round its own chronology.)
+
+**Instance 1 — the harness was wrong.** Driving the iq9's int8 YOLOv8 for the cross-board quantiser
+audit returned **zero class scores on every image**, with boxes that did not change when the input
+changed. Read at face value: *every int8 model on the fleet's reference part is broken* — a BLOCKER
+against a vendor. It was mine. The board's validated path reaches the accelerator through a TFLite
+delegate with NHWC/uint8 inputs; I was feeding NCHW tensors to context binaries from a different
+artifact family. The board's own known-good path returns 5 detections at 156 FPS.
+
+**Instance 2 — the ENGINE was wrong, and it was OURS.** Later the Orin produced the **identical symptom**, zero detections, and there the artifact
+really was broken: an int8 engine built with no calibrator. Two corrections to how this was first
+written. First, that engine was **built by our own benchmarking pipeline**, not shipped by NVIDIA —
+`orin_full.json` already described it as *"TensorRT INT8 (perf-only … NO calibration cache)"* with
+*"DETECTION ACCURACY IS INVALID — do not quote mAP"*. Second, and worse for us: **the caveat already
+existed and the zero still reached a cross-board comparison table.** A warning written in one record
+does not travel with the number into the next one. The *only* thing that
+separated instance 1 from instance 2 was running a **control on the same runner** — an fp16 engine
+that detected fine, proving the runner sound and the engine broken. Without it I would have shipped a
+false accusation against one vendor and a misdiagnosis of **our own build** as the other's silicon —
+with equal confidence in both.
+
+**Instance 3 — and this is the one that would have entered the corpus.** An NVMe-vs-UFS fio comparison
+returned **0.0 MB/s on all eight tests** and wrote a well-formed record, `"tag": "MEASURED"`, correct
+units, reproducible, with an immaculate provenance chain. `fio` could not load `libaio` (the `.so.1`
+exists; the loader symlink does not), every job died, and the parser turned "no output" into `0.0`.
+Nothing in the record said so. **A zero is the most publishable wrong answer there is: it needs no
+excuse, it survives every provenance check, and no reader questions it.**
+
+*The rule:*
+1. **A null/zero/degenerate result is a finding about the measurement path, not the device, until a
+   POSITIVE CONTROL on the SAME harness returns a non-null result.** fp16 where int8 read zero; a
+   known-good model where the model under test read zero; any run that proves the pipe carries data.
+2. **Harnesses must fail loudly, never default.** A parser that cannot find a value must say so in the
+   record and in the log. `${x:-0}` is how a broken run becomes a measured zero. Emit
+   `RETURNED NOTHING — do not trust this row`, and never a bare number.
+3. **This is not covered by reproduction.** A broken harness reproduces its zero perfectly, on every
+   run, on every board.
+
+   *What this adds over M31 and M46, stated plainly, because the overlap is real and a reader is
+   entitled to know which rule to reach for:*
+   - **M31** (*correctness is not binary; the failure mode is DEGRADATION*) demands a quantitative
+     floor against a reference rather than a did-it-detect-anything gate. Where a model produces
+     gradeable output, M31 **does** catch a zero, and catches it instantly — a non-detecting detector
+     scores mAP 0 and fails any floor. That covers instance 1 and instance 2. What it does not reach
+     is a zero from a measurement with **no model output to grade at all**: the fio storage record
+     had no mAP, no reference and no prediction — just a bandwidth field reading `0.0`, which is a
+     perfectly well-formed value. M31 assumes there is something to score.
+   - **M46** (predict what CORRECT looks like before you measure) would catch instance 3 — a predicted
+     NVMe sequential read of ~3 GB/s makes `0.0 MB/s` fail on sight. It would NOT catch instance 1 or
+     the amendment: at the time, "the iq9's int8 models detect nothing" and "UFS sustained writes are
+     bad" were both *plausible predictions*, and the amendment's zeros arrived beside correct reads
+     that made the run look predicted-shaped. (This gloss was corrected on 2026-08-25: an earlier
+     draft claimed M31 "gives the right instruction and no traction" against any zero, which
+     overstated the gap by ignoring M31's mAP floor.)
+   - **M48 adds the control.** Neither M31 nor M46 tells you to run a *second* thing. The specific act
+     that separated instance 1 (my harness) from instance 2 (the artifact) was an fp16 engine on the
+     same runner — not inspecting harder and not predicting better, but producing a non-null result
+     through the same pipe. That is the new obligation, and it is why this is its own rule rather
+     than a clause appended to either of the other two.
+
+*Corollary, with its limit stated:* the direction of the error is not always flattering. A zero
+throughput or a zero detection count makes the part look WORSE — which is why it can survive a reviewer
+who is only watching for numbers that are too good. **But this does not hold for every instance here.**
+Instance 2's *published* measurand was 82.9 FPS on an engine doing no work — squarely inside the
+directional-bias law, and the corpus itself calls it textbook broken-is-faster. M48 covers a case the
+directional law does not (instances 1 and 3, where the degenerate value is the reported one), rather
+than superseding it.
+
+**AMENDED THE SAME DAY — the first implementation of this rule missed the next instance.** Within the
+hour, the same storage harness produced zeros again, and the M48 guard I had just written **did not
+fire**. The guard tested `[ -z "$bw" ]` — *did the parse return nothing?* — but the defect was a
+parser reading the **wrong field**: `fio`'s JSON carries both a `read` and a `write` object per job,
+and grepping the first `"bw"` returns the **read** object, which is a legitimate `0` for a write-only
+job. The value was not missing. It was present, well-formed, and wrong.
+
+Note the shape: **reads were correct** (1717 MB/s UFS, 3225 MB/s NVMe) while every write read zero. A
+*partially*-correct harness is more dangerous than a dead one, because the correct half certifies the
+broken half — the zeros looked like a real device finding, and they would have "confirmed" a known UFS
+write weakness with a far more dramatic number than the truth (203 MB/s direct).
+
+*The rule, amended:*
+4. **Absence-checking is not enough. A zero that was never positively confirmed is as suspect as a
+   missing value.** Do not merely ask "did I get a value?" — ask "did this value come from the field
+   I think it did?" Parse structurally (`job['write']['bw']`), never positionally (`head -1`).
+5. **A partially-correct result does not vouch for its other half.** When some rows of a run are
+   plainly right and others are degenerate, the working rows are evidence the *tool* runs, not
+   evidence the *broken rows are data*. Gate each measurand on its own control.
+
+**CHECK — `results/bench_data/tools/null_result_guard.py`.** Clause 2 is the clause a machine can
+hold, so that is the one mechanised. The guard walks every results JSON under `remeasure/` and
+`campaign/`, finds every measurand-shaped field that reads `0` or `null`, and reports the ones whose
+own object says nothing about it. It deliberately does NOT try to judge whether a zero is true —
+nothing can, from the record alone — only whether it is **silent**, which is the exact property the
+fio record had: eight `0.0 MB/s` values, `"tag": "MEASURED"`, correct units, immaculate provenance,
+and not one word anywhere in the object saying the jobs had died.
+
+Three things it will not catch, named here so the next reader does not mistake a green run for
+compliance. It cannot see a wrong *non-zero* number (the amendment's real defect was a `0` in the
+read section of a write-only job — caught, but only because the value was zero; had the read section
+held a real number the guard would have passed it). It cannot verify that a disclosure is TRUE, only
+that one is present. And it checks records, not runs: a harness that never wrote the zero down at all
+is invisible to it. Clause 1 — *go run a positive control* — remains an instruction to a person.
+
+That this rule's own first mechanism failed against its own next instance is the point, not an
+embarrassment: a guard encodes the specific past it was written from. See the campaign's standing
+lesson that a checker does not merely miss things — it teaches its blind spot to everyone who trusts
+it.
+
+---
+
+**M49 — NEVER PIPE A COMMAND THAT WRITES THROUGH `head` OR `tail`. A viewing convenience can change
+what the command DID, and it fails looking exactly like success.**
+
+Earned 2026-08-25, on this file's own toolchain, and it is the second instance of the family in a
+single session.
+
+**Instance 1 — the register that was never written.** `single_board_check.py --md REGISTER.md` prints
+a summary and then writes the artifact. Run as `… --md REGISTER.md 2>&1 | head -12`, `head` closed the
+pipe after twelve lines, python took `SIGPIPE`, and the process died **before reaching the write**.
+The summary had already been printed, so the console showed the new counts (229/50/179) while the
+committed file still carried the old ones (164/48/116). The command appeared to succeed. Its visible
+output was correct. The artifact was untouched, and it was committed in that state.
+
+**Instance 2 — the bus watermark.** `bus.sh check` displays a batch of messages *and advances a
+read watermark over everything it processed*. Piped through `tail`/`head`, it marks all of them read
+while showing you N lines. This one already had a standing rule against it; I did it anyway, in this
+same session, an hour before instance 1.
+
+*The rule:*
+1. **If a command writes, mutates, or advances anything, do not pipe it into a pager or a truncator.**
+   Redirect the whole output to a file and read the file, or let it run to completion and read the
+   artifact it produced. The truncation you wanted was of your *reading*, and you applied it to the
+   *process*.
+2. **`SIGPIPE` failure is invisible in the worst possible way.** The exit status you see belongs to
+   `head`, which succeeded. The output you read is real — it is simply the output of a run that then
+   died. Nothing anywhere says so.
+3. **Reading a summary is never evidence about a file.** This is M44 restated, and instance 1 is its
+   sharpest case: the console was not merely insufficient, it was *actively misleading*, because it
+   was correct output from a process that never finished.
+
+> **CHECK:** no pipeline in a harness, a builder, or a session transcript may place `head`/`tail`
+> downstream of a command with side effects. Grep is the mechanism a person applies:
+> `grep -nE '(--md|--record|--write|--out|check)\b[^|]*\|\s*(head|tail)'`. It is a linting heuristic,
+> not a proof — a script whose side effect is not visible in its flags will pass it.
+
+*Why this is its own rule and not a footnote to M44.* M44 says verify the rendered artifact. It
+assumes a build that ran. M49 is about a build that **did not run**, while reporting as though it
+had — the same relationship M48 has to M31. Three rules, one shape: the evidence you are looking at
+is downstream of a step you never checked actually happened.
+
+---
+
+**M50 — A RESULT THAT INDICTS SOMEONE ELSE IS A HARNESS FINDING UNTIL IT REPRODUCES THROUGH THEIR
+OWN KNOWN-GOOD PATH. And the review asymmetry is not "flattering vs unflattering" — it is
+"expected vs unexpected."**
+
+Earned twice inside a single audit, on two different boards, two days apart. The second one shipped.
+
+**Instance 1 — caught.** Driving the IQ-9075's QNN context binaries with NCHW/uint8 tensors, where
+the board's validated path is a TFLite delegate expecting NHWC, returned **zero class scores on every
+image**. Read at face value: *every int8 model on the fleet's reference part is broken* — a BLOCKER
+against a vendor. Running **the board's own documented path** returned 5 detections at 156 FPS. The
+harness was mine. It is recorded in the audit's own `harness_near_miss` field.
+
+**Instance 2 — not caught, and published.** The same audit concluded that the O6's CIX Zhouyi int8
+path **over-detected 3.4×** (1152 detections against a 339-detection fp32 reference across 64
+images). It became a **red headline in `O6_BOARD_DOSSIER.md`** and a **contribution in the paper**.
+Re-measured two days later on the *same* 64 images with artefacts verified byte-identical by md5 and
+mtime: **346 detections — 1.02×, faithful. Zero of 64 images reproduced their recorded count**, and
+the per-image numbers track the fp32 reference (16→17, 17→16, 24→24, 7→6).
+
+The record's own proof line was the evidence against it. It captured `out S8 scale=1.000 zp=0`, read
+as "the classic missing-scale symptom". The tensor descriptor on the board reads
+**`scale=256.148 zp=127`**. The runner dequantises `(raw + zp)/scale`: with the true constants that
+maps int8 onto `[0,1]` — where a post-sigmoid class score must live — and with identity constants the
+raw integers pass through untouched, so hundreds of anchors clear a 0.25 threshold and survive
+class-agnostic NMS as spatially distinct boxes. **A failed descriptor read, published as a vendor
+defect.**
+
+*The rule:*
+1. **Before writing down that someone else's toolchain is broken, reproduce it through THEIR
+   documented path, on THEIR sample.** Two backends disagreeing is a harness finding until proven
+   otherwise. This costs minutes; the alternative cost a retraction in two shipped documents.
+2. **Check the values your proof line prints — do not merely print them.** A proof line is only proof
+   if someone compares it against what it *should* say. `scale=1.000 zp=0` was sitting in the record
+   the whole time, correctly captured and never checked against the descriptor.
+3. **Prefer a physical-range check to a symptom story.** A post-sigmoid class score outside `[0,1]`
+   is *impossible*, so it settles a scale question in one line and without a hypothesis. Reaching
+   instead for "this looks like the classic missing-scale symptom" is how a plausible mechanism
+   becomes a published cause.
+
+> ## ⭐ **This narrows the directional-bias law, and the narrowing is the important part.**
+> The standing law is that a broken measurement usually **flatters** the accelerator, because
+> faster-and-wrong survives review. This error ran the **other way** — it made a vendor look worse —
+> and survived anyway. So the asymmetry was never really about direction. **A finding that confirms a
+> suspicion is scrutinised no harder than a finding that flatters you.** Both are *expected*, and
+> expected results are the ones nobody re-runs. Ask of any result: *was I already prepared to believe
+> this?* If yes, that is the one to reproduce.
+
+*Corollary — do not let a suspect finding cross-flag a second claim.* On the strength of the 3.4×
+result I flagged the O6's separate 12.6 fps ADAS figure as resting on a compromised detection gate,
+and had to withdraw that the same day. **A cross-flag propagates a wrong finding into a claim that
+was never wrong**, and the withdrawal costs twice: once for the original, once for the collateral.
+
+> **CHECK:** any record whose verdict names a third party's component as defective must carry a
+> `vendor_path_control` field — the vendor's own path, on the vendor's own sample, with its result —
+> or the verdict is downgraded to "unreproduced". See `campaign/void_register.json` entry `1152`,
+> whose `trap` field records the review asymmetry above.
+
+---
+
+**M51 — A CHECK THAT DID NOT RUN LOOKS EXACTLY LIKE A CHECK THAT PASSED. Prove the mechanism can
+FIRE before you believe it is silent.**
+
+M48 says a zero is a claim about the harness. M51 is the same claim about the *verifier*: a green
+result means either "I looked and found nothing" or "I never looked", and nothing in the output
+distinguishes them. Earned four times on 2026-08-25, in four different mechanisms, all reporting
+clean.
+
+**Instance 1 — a builder that never ran.** `build_bench_deck.py` acquired a SyntaxError from an
+edit. Every subsequent rebuild failed, and every one was invoked as `python3 builder.py
+>/dev/null 2>&1`. The shipped deck kept its pre-edit content while the source said otherwise. Then
+`build_freshness_check --record` stamped that state as the baseline, so the staleness checker
+reported **0 stale** over a deck that had never been built. *A build that never ran and a build
+that ran and changed nothing leave the identical trace: an untouched file.*
+
+**Instance 2 — a self-test that tested a copy of the code.** `count_sync`'s historical-marker regex
+had been written with double-escaped backslashes and could never match anything. **The self-test
+passed**, because the test had reimplemented the same logic with a correct regex. *A self-test that
+reimplements the code under test proves only that the reimplementation works.*
+
+**Instance 3 — a checker whose paths did not resolve.** `ungated_check` reported "0 ungated, 0
+gated" — because its source-path resolver omitted the base directory the registries actually use,
+so all 84 timings were unresolvable and none were classified. Zero of zero reads exactly like a
+clean corpus. (`build_freshness_check`'s own first version failed the same way: 0 stale, 0
+clobbered, entirely inert, because builders name paths as bare basenames.)
+
+**Instance 4 — a gate that could not fail.** `presend.py` was called "the pre-send gate", ran 20
+checkers, and always exited 0: it treated a checker's rc 1 as success and never read the finding
+counts. A run with fifty silent zeros passed.
+
+*The rule:*
+1. **Read the exit code, never the silence.** `>/dev/null 2>&1` on a command whose success you are
+   about to rely on is the same defect as `${x:-0}` in a parser (M48 clause 2). If a build must
+   succeed, assert that it did.
+2. **A self-test must call the production code path.** No reimplemented regex, no parallel
+   helper, no copied constant. If the test and the code can disagree, the test is measuring the
+   wrong thing.
+3. **Every checker needs a NEGATIVE CONTROL: plant the defect it exists to catch and watch it
+   fire.** This is M2 ("prove the gate can fail") applied to the checkers themselves, and it is the
+   only thing that distinguishes the four instances above from a clean corpus. Each one was found
+   by planting, never by reading the code.
+4. **Suspect any all-or-nothing result.** "0 of 0", "none found", "everything passed" — these are
+   the shapes an inert mechanism produces. Ask what a *non*-zero result would have looked like, and
+   whether this run could have produced one.
+
+> **CHECK:** every tool under `bench_data/tools/` exposes `--self-test`, `presend.py`'s own
+> self-test asserts that every such tool is wired into the gate, and `presend.py` exits non-zero on
+> any finding (verified by planting a silent zero: exit 1; removing it: exit 0). `rebuild_all.py`
+> reads every builder's exit code and diffs deliverables semantically;
+> `build_freshness_check.py --record` refuses to baseline a broken or stale tree.
+
+> ## ⭐ **AMENDED 2026-08-25 — independently reproduced in another domain, and sharpened by it.**
+>
+> The `holobench` session, running a real-silicon networking lab that shares nothing with this
+> corpus but the shape, arrived at the same law the same week from four instances of its own: *a
+> claim that outruns the vantage that produced it*, where **four separate times a step that never
+> ran was scored as a wire failure** — a crashed writer, a peer whose beacon never started, a field
+> parsed from a log that had not ended, a credential never captured. In every case the wire was
+> fine. Their generalisation: **every participant in a measurement must prove it participated.**
+>
+> **The polarity is the part neither of us had alone.** This corpus's four instances are *green
+> verdicts from checks that never ran*. Theirs are *red verdicts from steps that never ran*. Same
+> defect, opposite sign — and the two fail differently:
+> - a **false green is invisible**; nobody investigates a pass;
+> - a **false red is loud and MISDIRECTING** — it sent people to the wire while the fault sat in the
+>   harness, which costs more than silence because it spends effort in the wrong place.
+>
+> **A third variant belongs beside them: the instrument that did not measure the thing.** Reading
+> `tegrastats` GR3D_FREQ at 0% during a CUDA decode nearly put "the Orin GPU does nothing" into this
+> corpus. GR3D is the *graphics* engine and does not count CUDA compute. The check ran, the number
+> was real, and it was about something else. So the family is three — and they are **not** equally
+> catchable. Ordered by difficulty (the other session's observation, and it is right):
+>
+> | variant | trace it leaves | catchable by |
+> |---|---|---|
+> | step never ran | a **red** that misdirects | the loudness itself, eventually |
+> | check never ran | a **green** that is too quiet | an all-or-nothing result; a negative control |
+> | instrument measured the wrong quantity | a number that is simply **true and irrelevant** | nothing automatic — only knowing what the instrument counts |
+> | **claim decayed by repetition** | **a citation with no artifact under it any more** | **re-deriving it from the artifact at the moment of citation** |
+>
+> The third is bad because nothing about the reading is anomalous: no dispersion check and no
+> negative control catches it, and the value survives every automated cross-check *because it is
+> correct*. **The fourth is different in kind and was contributed by the other session from its own
+> twelfth instance** — a "three consecutive clean runs" claim asserted five times across two days,
+> unchallenged by three sessions, on exactly **one** preserved transcript. It fits none of the three
+> catch-mechanisms: nothing was planted, no number looked wrong (333 and 307 were correct and
+> "three" is unremarkable), and the only person who could have known was its author. What caught it
+> was being **about to cite it** to someone who would act on it, and re-deriving from the artifacts
+> instead of from their own earlier messages.
+>
+> **A claim decays by repetition.** Each restatement makes it more established and less examined,
+> so the fifth telling has four citations behind it and still one transcript under it — which is
+> the mechanism sentence again: *a claim that has survived four retellings has already survived
+> every reading its author was going to give it*, for exactly the reason a working defect has.
+>
+> ⭐ **And the fourth row is a DISCIPLINE, not a DEFENCE.** The other three are things you build;
+> this is something you *do*, at a moment identifiable in advance — **whenever you are about to hand
+> a number to someone who will act on it.** It is also the cheapest: provocation costs a deliberate
+> defect, a fresh reader costs another agent, an anomalous number costs luck. This costs re-reading
+> your own evidence before spending someone else's trust on it.
+>
+> *We have an instance of it too, and it was caught the same way.* This corpus's own adversarial
+> finding curve was quoted from memory across many messages and **never recorded**. It surfaced only
+> when `claude-connect` was about to print it on a slide, found two of our restatements
+> irreconcilable, and refused to pick one — citation-time re-derivation performed by the citer
+> rather than the author. `tools/audit_curve.py` now generates it from commits, and the generated
+> curve does not match either remembered version.
+>
+> **The claim worth publishing is about METHOD — and it took two narrowings to state correctly,
+> which is the best evidence for it.** The first draft said *not one of these was found by reading
+> code*. The other session audited its own commits against that and produced **counterexamples**:
+> three defects it had caught prospectively, by reasoning about a `sudoers` rule and a spec before
+> either was exercised. Its narrower form — *no defect that had **already fired** was found by
+> reading* — is better: reading finds what you are about to do wrong; provocation finds what you are
+> already doing wrong **and being rewarded for**.
+>
+> Auditing our own four against *that* produced one more counterexample, and it moves the variable.
+> `presend.py` had been exiting zero on runs containing findings — already firing, already producing
+> a plausible result — and it was caught by **reading**. But not by us: by an adversarial agent that
+> had not written it.
+>
+> So the form that survives both audits is about **who reads**:
+>
+> > Across two independent sessions and sixteen instances, **no already-firing defect of this class
+> > was found by its own author reading their own code.** Each was caught by exactly one of four
+> > things: provocation, an anomalous *number*, a reader who had not written the code, or
+> > **re-derivation from the artifact at the moment of citation**.
+>
+> And the mechanism is why this is not just "review is weak": **a defect already producing a
+> plausible result has, by construction, already survived every reading its author was going to give
+> it.** That is what makes the class invisible — it has *already passed one review*. A fresh reader
+> has not yet been survived; a planted fault does not care who is looking. This sharpens the
+> three-catcher division rather than replacing it: the author catches hazards **before** they fire;
+> the independent reader and the mechanical gate catch what is **already** firing; the author
+> re-reading their own work catches neither.
+>
+> *And the rule earned its keep on the artifact it was handed to.* Pointed at their own
+> `prove-oracle-bites.sh` — the control that made their headline a result rather than a green — it
+> asked what proves the CONTROL can detect a board whose oracle cannot refuse. Nothing had. It would
+> have reported `controls_held=4/4` against a receiver accepting everything, provided that receiver
+> stayed quiet, and it had done so across every clean run while being quoted as the evidence. ⚠️ RUN COUNT CORRECTED 2026-08-26: this sentence said "three clean runs". The other session corrected that number ON THE BUS on 2026-08-25 — first to "three observed, one preserved", then, after catching a SECOND decay of the same claim, to the accurate **four runs observed, two with preserved transcripts**. Neither correction propagated here, because they audited their own copies and I never checked mine. That is their own finding — "I audited the claim; I did not audit its copies" — extended one hop further: a correction has to cross SESSION boundaries too, and the citing session is the copy nobody owns. They
+> planted a body-gate-stripped oracle; the control noticed. **And they meta-verified it against this
+> rule's own instance #2** — substituting a healthy oracle makes the new test fail, so the test that
+> proves a gate can fail is not itself a test that cannot.
+
+---
+
+**M52 — "THE ORIGINAL DATA IS UNRECOVERABLE" IS A CLAIM ABOUT AN ARTEFACT, NEVER A REASON NOT TO
+HAVE THE NUMBER. It is also self-sealing: written into a record, it stops the re-run that would
+have recovered it.**
+
+Every other rule here is about a number being wrong. This one is about a *sentence* being wrong —
+and about the specific damage a wrong sentence does when it is an excuse. Three instances, all in
+this corpus, all discovered by ignoring the sentence and re-running anyway.
+
+**Instance 1 — "the original engine no longer exists."** Two source blocks in
+`colleague_yolo_llama_2026-08-14.json` asserted it about an Orin fp16 engine, so an 11% discrepancy
+sat open for **three days** while nobody re-ran the artefact. The record's own correction log says
+it plainly: *"it is what kept the discrepancy open for three days — nobody re-ran the artifact
+because the record said it was gone."* The engine was on the board the whole time.
+
+**Instance 2 — "the vendor runtime cannot load these models."** True, and irrelevant. The O6's
+figures for Phi-4-mini and Qwen3-4B were filed as unrecoverable because the *self-build's*
+`llama-cli` binary was missing from the board. The **source tree was intact**; `cmake --build`
+took minutes, the rebuilt binary loaded both models, and both are now gated. What was missing was
+a build artefact, and the record had generalised that into "cannot".
+
+**Instance 3 — "those runs cannot be retro-gated."** Also true, and also not the end of it. The
+ARA240 sweeps ran with `input_path:""` — random input, no outputs kept — so the *original* runs can
+never be graded. But the models, the board and the harness all still exist: re-running with real
+frames produced the same timings to within 0.07% **and** the detection gate the originals could
+never have had. *Cannot be retro-gated* had been read as *cannot be gated*.
+
+*The rule:*
+1. **Distinguish three different statements, because they get collapsed into one.**
+   - *The original artefact is gone* — often true, usually irrelevant.
+   - *This specific run cannot be reconstructed* — true by definition once the output was discarded.
+   - *This measurement cannot be obtained* — almost never true, and it is the only one that
+     justifies leaving a hole in the corpus.
+2. **A record may state that data is unrecoverable ONLY alongside what re-running would cost.**
+   "Unrecoverable" with no re-run cost beside it is an unbounded excuse; "unrecoverable; a fresh
+   run needs the board for 20 minutes" is a scheduling decision. Every instance above collapsed the
+   moment somebody priced the re-run.
+3. **Treat an unrecoverability claim in a record as UNVERIFIED until someone checks the artefact.**
+   It is a factual assertion about a file, a board or a binary, and it decays exactly like any other
+   claim (M51's fourth mechanism) — except this one decays into permanent silence, because its own
+   content discourages the check that would refute it.
+4. **When you cannot close a gap, name what would close it.** Not "no Q8_0 model exists" but "needs
+   Qwen2.5-14B-Q8_0 (~15.7 GB) staged to /mnt/ssd/models, then re-run `gated_decode.sh`." The first
+   is a wall; the second is a task.
+
+> **CHECK:** any record asserting that data is lost, gone, unrecoverable, or un-re-runnable must
+> carry a sibling field naming the artefact checked and when. `grep -rn "no longer exists\|cannot be
+> retro\|unrecoverable\|harness lost" results/` enumerates the current claims; each one is a
+> re-run someone has not yet priced.
+
+*Why this is its own rule and not a note under M48.* M48 says a null is a claim about the harness.
+M52 says **an EXCUSE is a claim about the world**, and it is the more dangerous of the two, because
+a null still looks like a gap that wants filling while an excuse looks like a question already
+answered. The corpus lost three days to instance 1 and would have shipped two permanent holes from
+instances 2 and 3 — not because anyone measured anything wrong, but because a sentence said not to
+bother trying.
+
+---
+
+**M53 — AN INPUT IS PART OF THE MEASUREMENT, AND WHICH INPUT IS THE USER'S CALL. Before running a
+benchmark, establish whether it needs REAL data, whether synthetic is fine because only the pipeline
+is under test, or whether noise IS the point because worst-case is the goal. Declare which, in the
+record. A harness that generates its own input has silently chosen one of those three, and it will
+choose wrong.**
+
+Every mechanism in this corpus asks whether a number came from a real run of a real model on real
+silicon. Not one of them asks whether the *input* was representative of the workload being claimed.
+That is a whole class of defect with no guard, and it produced one here.
+
+The SmolVLA precision campaign gated every stage against an fp32 reference computed from the same
+input — the correct design for comparing precisions, and it worked. The input was uniform random
+pixels. Worse, the int8 models were **calibrated on 64 real COCO frames and then evaluated on
+noise**. The calibration set had been chosen with real care: named, hashed, drawn from a specific one
+of the two near-disjoint COCO sets the corpus keeps, with held-out indices tracked. The evaluation
+input was whatever `numpy.random` happened to emit, because no one ever decided it.
+
+Calibrate on one distribution and test on another and the error does not merely add noise; it runs
+in a *direction*. Noise drove larger ViT activations than natural images (max 32.7 vs 19.5), so it
+was the harsher case, and the reported int8 cosine was 0.132 where the real-image figure is 0.465 —
+pessimistic by 3.5×. The verdict survived (0.18–0.47 is unusable either way) but the headline number
+was wrong, and it was wrong in the direction that made a vendor's quantiser look worse than it is.
+
+The three cases are genuinely different and only the person who asked for the benchmark knows which
+one they want:
+
+- **Real data required.** The number will be read as "what this hardware does on this workload."
+  Anything synthetic makes it a different claim wearing that sentence.
+- **Synthetic is fine.** The pipeline is what is under test — plumbing, shapes, does-it-run,
+  does-it-build. Latency on a fixed-shape network with no data-dependent control flow is genuinely
+  input-independent, and *that property must be verified rather than assumed*. It was here: 12.14 ms
+  on a real image against 12.20 on noise.
+- **Noise IS the goal.** Worst-case stress, range-saturation, a deliberate hunt for the ugliest
+  activation distribution the silicon will see. A legitimate and useful experiment — and the one
+  thing that must never happen is arriving at it by accident and reporting it as the typical case.
+
+So: **ask.** One question, before the run, at the only moment it is free. And write the answer into
+the record next to the numbers, because a reader six months out cannot tell noise from a photograph
+by looking at a latency.
+
+`tools/input_provenance_check.py` enforces the declaration: any record carrying MEASURED timings
+must name its input and say which of the three cases it is. It cannot tell a good choice from a bad
+one — no checker can — but it can refuse to let the choice stay implicit.
+
+⭐ The generalisation past inputs: **a gate can be perfectly sound and still be pointed at the wrong
+thing.** M2 asks whether the gate can fail. M51 asks whether it ran. M53 asks what it was aimed at.
+The three are independent, and only the last one needs a human, because only the human knows what
+the number is going to be used to claim.
+
+---
+
+**M54 — CORRECTING A DECAYED CLAIM DOES NOT IMMUNISE IT. The counter resets and the drift resumes, in
+the same direction, and the SECOND decay is harder to catch than the first — because you remember
+having checked. Re-derive a corrected number at every citation, not once at the correction.**
+
+From holobench, 2026-08-25, reporting on their own artefacts. They had said "three consecutive clean
+runs" five times; checking, they held one transcript. They corrected it publicly — and within a day
+the same claim had climbed to "four", without re-derivation. Their sub-finding is the part that
+generalises: *"I already audited that number" is itself a decayed claim about a past act, and it
+does exactly the work the original claim was doing — standing in for the artifact.*
+
+Confirmed independently here the same day, and it cost more than it should have. Applying their test
+to my own corrections found **two live re-drifts within hours**:
+
+- The int8 ViT cosine was corrected from 0.132 (measured on random-noise input) to 0.465 (real
+  held-out images). The **shipped deliverable** still stated 0.132 bare as the current figure —
+  three paragraphs below its own note explaining the correction. One location was fixed; the claim
+  survived in another.
+- The "Orin fp16 anomaly" was resolved by the 5090 measurement (two of three CUDA devices agree at
+  0.23; Thor is the outlier). The resolution was written into the 5090 record and never propagated
+  back. The original block read `UNRESOLVED` for hours after it was resolved.
+
+Neither was caught by any of the twenty-three checkers then in place. Both were caught by asking the
+question `tools/redrift_check.py` now asks: *does the superseded form of a claim I already corrected
+still stand anywhere as current?* The registry names each corrected claim, a pattern matching its
+**superseded** form, and the guard words that distinguish a legitimate historical reference ("0.132
+on noise, superseded") from a live re-assertion ("cosine 0.132 at 2.50x slower").
+
+⚠️ **And state the registry's limit as a property, not an apology** (holobench's framing, adopted):
+a hand-maintained registry catches drift only in claims *someone thought to register*. It cannot
+catch the FIRST decay of an unregistered claim — only the re-decay of a known one. That is still the
+harder half, because re-decay is the decay that has already survived being corrected. Do not read a
+green `redrift_check` as "no claims have decayed"; read it as "no claim I registered has decayed
+again."
+
+⭐ **Two failure modes found on 2026-08-26 that the registry as first written could not see:**
+
+1. **The ROUNDED form.** The registry matched `0.132139|cosine 0\.132\b` and reported *"holds, 0
+   re-drifted"* while SIX live sites carried `0.13-0.22`, `cosine 0.13`, `0.13-0.47`. Rounding is
+   the most natural thing a writer does when quoting a number into prose, so it is the form a
+   correction is MOST likely to re-drift into — and it was the one form the pattern excluded.
+   Register the rounded forms, then **plant the drift and confirm the checker fires** (M51).
+   One of the six sites was in the file that RENDERS the deliverable, which no reviewer had listed.
+
+2. **The correction has to cross SESSION boundaries.** holobench corrected their run count on the
+   bus, twice, and audited their own copies. The superseded number was still sitting in *this* rules
+   file, because they cannot grep my repo and I had no reason to re-grep theirs. Their line was "I
+   audited the claim; I did not audit its copies" — the copies you did not audit include **the ones
+   in other sessions' trees**. When you correct a load-bearing number, everyone you have already
+   cited it to is a distribution list, not an audience.
+
+⭐ **The composite form, arrived at 2026-08-26 when both halves failed in one exchange:**
+**RE-DERIVE WHAT YOU CITE, AND RE-SEND WHAT YOU CORRECT.** Two obligations, different owners, and
+each one's failure is invisible to the person best placed to fix it.
+
+The demonstration is unusually clean because it happened in both directions at once. holobench
+completed a load-bearing result (their leg1 crossing) and their "complete" message went to two
+sessions — not to the one writing the paper. Meanwhile I ended a message to them by restating their
+*previous* status as current, 21 hours after it was superseded, and committed that sentence into a
+pushed commit body — inside a message that was itself *about* re-deriving at citation.
+
+Neither of us could have caught our own half. **You cannot know who is holding your stale claim; the
+holder cannot know your claim went stale.** A citer who re-derives catches a superseded number even
+if nobody told them. A corrector who re-sends reaches a holder who would never have thought to ask.
+Only the pair closes the loop — and the paper's example of the failure was produced by the two
+sessions writing the paper about it.
+
+⭐ **A HASH VERIFIES IDENTITY, NOT CONTENT — and it is the most convincing way to pass on nothing.**
+Found 2026-08-26 re-deriving a collaborating session's evidence bundle. Five files, five published
+md5s, all five verifying. One of them, `VERDICT.txt` — named in the bundle's own README as *"the
+scorer's per-leg verdict"* — is **295 bytes: a title line and a box-drawing separator.** There is no
+verdict in it, and the verdict quoted on the bus (`pass=2 fail=0 inconclusive=0`) appears nowhere in
+the bundle.
+
+Its hash is the *correct* hash of an empty verdict. A checksum proves a file is the one the author
+meant to ship; it cannot notice that the file says nothing. So the strongest-looking integrity check
+in the bundle passed on the only file with no content — **M51 wearing a cryptographic wrapper**, and
+harder to doubt than a plain green because the hash *did* do exactly what it claims.
+
+⭐ **The strongest evidence that "instrument pointed at the wrong quantity" has nothing automatic
+reaching it:** in the same evidence bundle, three errors were found by re-derivation, and they
+needed three different depths of looking.
+
+| error | how it was reachable | passes to find |
+|---|---|---|
+| extraction broke, verdict file empty | open the file | 1st |
+| headline quoted the guest-side total (673) where the load-bearing total is 771 | one subtraction | 1st |
+| the guest's 673 printed under **each** leg as if per-leg | *no arithmetic reaches it* | **3rd** |
+
+The third **survived two prior re-derivations of the same artifact by the same person.** Both earlier
+passes checked whether 673 was correct, and both times it was — it is an exact count of the guest's
+PASS lines. It fell only when the question changed from *"is this number right?"* to **"this number
+counts what, exactly?"** The label was per-leg; the count was whole-console; nothing about the value
+was wrong. The other session traced it to one line of scorer code interpolating a per-leg ethertype
+beside a whole-console count, so it would have recurred on every future run.
+
+*Act:* for every number beside a label, state what it counts and check the label can bear it. A
+correct count under a wrong label is invisible to every dispersion check, every hash, and every
+re-derivation that only re-computes the value.
+
+*Act:* when an artifact is cited as evidence, open it and read the claim out of it. Verifying its
+hash and moving on is checking that the envelope is sealed without checking there is a letter in it.
+A companion check is cheap and mechanical: **assert that the artifact contains the string it is cited
+for.** (The result itself was unaffected — it rested on two raw board logs whose counts re-derived
+exactly. It was the *verdict artifact* that was empty, which is the point: the load-bearing evidence
+and the impressive-looking evidence were different files.)
+
+*And a scope can be crossed by the person who wrote it.* The same bundle's README states that the
+emulated guest's log is CORROBORATION ONLY — a guest-side PASS is compatible with nothing leaving the
+NIC — and the announcing message then quoted the **guest-side** count (673) as the headline total,
+where the load-bearing board-side total is 771. The warning reached its readers and not its author,
+because the author was not its reader. Lower, so nothing looked wrong.
+
+⭐ **THE CLOSING LINE DECAYS LAST AND IS READ FIRST.** Contributed by the collaborating session
+2026-08-26, from an instance of mine, and it is a variant neither of us had named.
+
+I ended a message with *"good hunting on leg1"* — a thing that had been finished for a day — in the
+**same message** whose body correctly described leg1 as complete, with its numbers. So this is not a
+decayed belief, and not an unpropagated correction: the correct form and the stale form were in one
+message, written by someone demonstrably holding the correct one. Their own instance is the mirror
+image: they put a guest-side count in a headline while their own document said not to cite it.
+
+*Why this slot specifically:* sign-offs, headlines and subject lines are written in a different mode
+from the body — social rather than evidential, habitually reused from the previous message, and
+exempted from the checking the body receives **precisely because they carry no numbers**. And it is
+the slot a reader hits first, and often the only slot they read.
+
+*Act:* before sending, re-read the FIRST line and the LAST line as if they were claims. They usually
+are. This costs one re-read and catches the one thing the body's discipline structurally cannot.
+
+*Disposition for a stale phrase already pushed:* do not rewrite public history for it. Rewriting a
+branch other sessions have been told to cite trades a small stale phrase for a much larger hazard.
+Record it as known-stale and dated, in the place a future reader would look.
+
+⚠️ **A scoped negative is true at an INSTANT.** I reported "grepped for their identifiers across
+every .md/.json/.py: zero hits" and it was thanked for being properly scoped. The same grep days
+later returns hits in five files. Whether it was false when said or became false afterwards is not
+recoverable — which is the point. A scoped negative needs a timestamp and a re-run at citation,
+exactly like a count.
+
+Note the shape of both failures: **the correction was written down correctly and did not
+propagate.** Neither was a memory lapse. The corrected form and the stale form coexisted in one
+document, and the stale one was the one a reader would quote, because it sat in the results table
+while the correction sat in the notes.
+
+⭐ The direction matters and it is not random. holobench's drifted twice, both times upward, both
+times toward a stronger reproducibility claim — the second drift happening *while they were writing
+to me about the first*. Mine drifted toward the more dramatic finding (0.132 is a better headline
+than 0.465) and toward the unresolved mystery (an open anomaly is more interesting than a resolved
+one). Correcting a claim changes the record; it does not change what you want to be true, and the
+want is still there afterwards, still pulling.
+
+---
+
+**M55 — A TEST SET THAT CANNOT EXERCISE THE PARAMETER UNDER TEST IS NOT A CONTROL. Before trusting a
+golden, check that its VALUE DISTRIBUTION spans the thing you are varying. A hash that agrees for the
+right reason and a hash that agrees because the test never reached the interesting region are
+indistinguishable from the outside.**
+
+From the SGM campaign, 2026-08-28/29, found twice from opposite directions.
+
+**Instance 1, mine.** I handed an agent a correctness check I was pleased with: *"D=128 must reproduce
+the D=64 hash on this scene, so a different hash proves it broken."* Every true disparity in that
+scene was under 64, so the two agree — but agreement is **also exactly what a kernel searching only
+d<64 would produce**. My check could not tell a correct D=128 from a fake one, and I would have
+accepted the fake. The agent built a discriminating scene instead (true disparities to 154, 27% of
+pixels above 64) so every D value has a distinct golden.
+
+**Instance 2, 95emulator's, and it reached further.** Their primary golden — the one *every non-CUDA
+target in the corpus was accepted against, mine included* — had **max disparity 44 at SGM_D=64**.
+Disparities 45–63 never win anywhere in it, so an implementation that only searches d<45 reproduces
+`b1b407b5949f0cc1` byte-for-byte. Verified two ways: an independent numpy re-implementation
+restricted to d<45 produced a byte-identical map, and the golden's histogram showed 21 distinct
+values, max 44.
+
+⭐ **The root cause is a property of the TOOL, not of a seed.** `gen_synthetic.c` assigns slab
+disparity as `D/4 + rand%(D/2)`, so maximum true disparity is `3D/4 − 1`. **The generator can never
+populate the top quarter of any range.** Every golden it has ever produced has a blind top quarter,
+at every D. A `if (d > SGM_D-2) d = SGM_D-2` clamp sat there looking like a deliberate bound.
+
+**The check, and it is one line:** histogram the golden and compare its support against the parameter
+range. `max(golden) < D−1` means the top of the range is unverified. Where the corpus quotes a hash
+as correctness evidence, that hash is only evidence for the region the scene actually reaches.
+
+**Consequence for this corpus, stated rather than buried:** Hexagon figures taken on the old scene —
+the 962 MDE/s D=64 number and the 18.7× → 12.8× → 1.45× trajectory — cite a hash that could not see
+d≥45. The numbers survive, because the same kernel reproduces a full-range golden bit-exactly, which
+is *stronger* evidence. But **the evidence had to be re-sourced, and an auditor deserves to be told
+which hash proved what.**
+
+---
+
+**M56 — CORRECTNESS GATES CATCH WRONG ANSWERS. ONLY A PREDICTED COST CATCHES SLOW-BUT-RIGHT. Gate
+every phase against its own op-count arithmetic, not against its share of the total.**
+
+Two instances in one campaign, both with **perfect output and a silent hash**:
+
+- My HVX census stepped 128 columns from x=4 and stopped at 1796, handing the last 124 columns of
+  *every row* to a scalar 62-neighbour fallback. **6.7% of pixels consumed ~50% of the phase.**
+  92.0M → 15.8M cycles with one overlapping tail block.
+- `build_cost`'s first DPAD columns were scalar: 10% of the cost phase at D=64 but **46.4% at
+  D=240**, where 13.3% of pixels did 5.6× the work. Fixing it took 10.1% off the whole frame.
+
+Neither was findable by any correctness check, in principle: the kernels were bit-exact throughout.
+
+⚠️ **Do not judge "is this phase done?" from its SHARE.** A share is a ratio against a total that also
+moves, so a phase reads 6.9% and looks finished while hiding a 5.8×. Shares are the right way to
+report a *change* and a bad instrument for judging *completion*. Use absolute per-phase cycles.
+
+🚨 **And the data was already there.** 95emulator's harness had written absolute `census_ms` /
+`cost_ms` / `aggregate_ms` into every JSON since its first commit. Nothing ever gated on them. The
+lesson is not "we lacked an instrument" — it is **"we had it and reasoned from the ratio anyway."**
+
+⭐ **A gate whose metric moves the WRONG WAY under the fault is worse than no gate**, because it
+manufactures evidence of health. 95emulator first built the roofline as a between-phase *spread*
+check; planting the census tail gave: healthy spread 1.62×, **planted spread 1.26×** — the defect made
+the gate look *healthier*, exit 0, GOLDEN OK. Rebuilt against absolute per-phase budgets, calibrated
+per impl+board, with the threshold **set by planting** (0.0819–0.0832 ns/op healthy; defect at 1.25×;
+limit 1.15). Exit 2 = wrong answer, exit 3 = right answer produced too slowly. Keep them distinct.
+
+---
+
+**M57 — HAVING A NAME FOR A FAILURE MODE IS NOT HAVING CHECKED FOR IT. A check that exists but was
+never AIMED at a given artefact provides zero coverage of it.**
+
+95emulator's formulation, 2026-08-29, and it indicts both of us equally. Between us we had: named
+*cannot-discriminate* as a failure class, written it into a report, hit it in a D-sweep, and built a
+discriminating scene to fix it **there**. Neither of us then asked whether the *primary* golden — the
+one the whole corpus was accepted against — had the same hole. I had the discriminating scene in hand
+and never pointed it at their baseline. They had measured "max disparity present = 44" while
+debugging and read it as a build-flag problem rather than an acceptance-model problem.
+
+**The check existed. Nobody aimed it.**
+
+🚨 **The same shape at the tooling layer, found the same day.** `distribution_sync.py` reported
+`0 file(s) drifted` while the shipped workbook was two days stale. The generator writes to
+`<the generator's output directory>`, and *nothing* copies that into `results/` — so the gate compared a stale repo
+copy against an equally stale distribution copy and passed. **It was checking the wrong pair.** A
+comparison between two things that move together is not a check.
+
+**The practice:** when you name a failure mode, enumerate every artefact of that kind you own and
+point the check at each one. A failure class with one confirmed instance and no sweep is a warning,
+not a control.
+
+---
+
+**M58 — WHEN EVERY INPUT CHECK PASSES AND THE RESULT IS STILL WRONG, THE MISSING CHECK IS BY
+DEFINITION THE ONE NOBODY LISTED. Only a PRE-REGISTERED EXPECTED VALUE notices that.**
+
+The LIBERO campaign, 2026-08-28. Closed-loop evaluation of GR00T vs SmolVLA. Before any run I had
+verified, each correctly:
+
+- action scale against the dataset, per dimension, gripper at ±1 — matched
+- state encoding against real data: `eef_pos(3) + quat2axisangle(3) + gripper_qpos(2)`
+- camera identity by frame-to-frame motion (the wrist view moves 1.8× more)
+- a **random-policy control** returning 0%, proving success detection does not spuriously fire
+- the replan interval, swept 1 / 8 / 50
+- the training loss, confirmed converged (last decile −0.25%, LR annealed to 2.5e-06)
+
+**The pipeline was still wrong.** `robosuite` renders its offscreen cameras **rotated 180°** relative
+to how the LeRobot dataset stores them — correlation between env frame and dataset frame was −0.2229
+as-is and **+0.8952 after `[::-1,::-1]`**. Both policies were fed an orientation they had never
+trained on. Images "obviously" come out of a renderer the right way up, so orientation was never on
+the list.
+
+⭐ **What caught it was a number written down in advance**, not any check: *"SmolVLA < 40% on
+LIBERO-Spatial ⇒ harness broken, do not report a comparison."* It fired at 20%. A second
+pre-registration — *"GR00T has no published number on this setup; if it lands far below SmolVLA,
+wrong-mapping and genuinely-bad are indistinguishable"* — is why I went hunting for a bug instead of
+writing up a finding.
+
+🚨 **The counterfactual is the whole argument for the practice.** Pre-fix: SmolVLA 20%, GR00T 0/50.
+The natural headline is *"SmolVLA crushes GR00T"*. Post-fix, at n=200/n=100: **GR00T 91.5% vs SmolVLA
+52.0% on Spatial, 95.0% vs 17.0% on Long.** The uncorrected result was not merely imprecise — **it was
+inverted, by 46 points, and it would have been published.**
+
+⚠️ **The failure pattern was itself the clue.** GR00T collapsed to 0/50 while SmolVLA degraded to 20%.
+A shared *input* defect explains both — a diffusion head given out-of-distribution vision fails
+completely, a VLM backbone that has seen rotated imagery degrades gracefully. "GR00T is simply bad at
+this" explains only one of the two numbers. **When two systems fail differently but both fall short
+of their own published figures, suspect the input they share, not the models.**
+
+---
+
+**M59 — SAY WHICH KIND OF COMPARISON YOU RAN. Matched-BUDGET and matched-CEILING answer different
+questions, and a normalised unit is valid for comparing implementations at a FIXED configuration and
+invalid for choosing a configuration.**
+
+Two forms, both from 2026-08-29.
+
+**Training comparisons.** The LIBERO result — GR00T 91.5/95.0 vs SmolVLA 52.0/17.0 — is matched
+**budget**: identical data, identical 10k steps, identical batch. It is *not* matched **ceiling**: our
+SmolVLA sits below its own published 90/71, and at 10k steps the Long suite gets 3.15 epochs against
+Spatial's 6.04. The defensible claim is **sample efficiency at a fixed budget**, not superiority at
+convergence. Both are real findings; only one is supported by the run.
+
+**Normalised units.** MDE/s divides out the disparity range as though D were free to choose. It is
+not: `d = f·B/Z` with `f = (W/2)/tan(HFOV/2)` ties D to image width and inversely to field of view, so
+work scales as **W²·H**. 95emulator's formulation, adopted verbatim in substance: *MDE/s is valid for
+comparing implementations at a fixed configuration and invalid for choosing a configuration.* Every
+cross-platform number in this corpus is the first kind, so nothing is retracted — the **sweeps** are
+the second kind, and that is exactly where the unit misleads.
+
+⚠️ **Corollary for cross-platform rows:** two cells measured at different configurations are not
+comparable merely because the unit normalises. Our D=128 Hexagon figure and 95emulator's D=128 CUDA
+figure use different scenes and different goldens; they are not a row until they share one.
+
+---
+
+**M60 — A WARNING NAMES A FAILURE MODE, NOT A LOCATION. Harden the INVARIANT everywhere it can
+break, not the spot the warner pointed at. A port that fixes only the warned location ships the
+warned failure with extra confidence.**
+
+From the Configuration B port, 2026-08-30. 95emulator warned, correctly and specifically: *"with
+P2=200 the aggregation bracket can exceed 255 — you must saturate the output add or you will wrap
+and produce a plausible wrong map."* The mode was real. The location was not.
+
+The aggregation add was **already saturating** — Config A's `step2` had been hardened long before.
+What P2=200 actually broke was the **argmin key**, one stage downstream: the path-sum S now reaches
+8×255 = 2040, silently overflowing the `(S<<6)|d` uint16 sort key. Same failure mode as predicted —
+integer overflow producing a plausible wrong map — in a stage neither the warning nor the port plan
+named. A port that had responded to the warning by auditing the aggregation add, found it already
+safe, and moved on, would have shipped wrong maps **with the extra confidence of having "handled"
+the warning**.
+
+The port agent caught it by tracing the *invariant* ("what is the maximum value this quantity can
+now reach, and does every consumer of it still have headroom?") through every stage downstream of
+the changed parameter, then sim-proving the redesigned key on tie-storms at the cap.
+
+⭐ **The practice:** when a parameter change comes with a warning, translate the warning from a
+location into an invariant, and sweep every consumer of the affected quantity. The warner saw the
+mode through the lens of *their* implementation; yours breaks in the stage *theirs* didn't have, or
+had already hardened. This is the transfer-finding pattern (a finding crossing implementations lands
+in a different place) applied prospectively.
+
+⚠️ **And the epistemic trap that makes it dangerous:** "I checked the thing the warning said" *feels*
+like diligence and *reads* as diligence in review. It is coverage of the messenger's example, not of
+the failure class. Same family as M57 (a named failure is not a checked failure) — one step more
+insidious, because here a check genuinely ran and genuinely passed, on the wrong stage.
+
+---
+
+**M61 — A CROSS-PLATFORM COMPARISON IS ONLY AS FAIR AS ITS LEAST-OPTIMISED SIDE. Name the TUNING
+TIER of every row, and never let a tuned port beat an untuned oracle and call the result a property
+of the hardware.**
+
+From Configuration B, 2026-08-29/30, and the error is mine end to end. I measured a hand-optimised
+HVX port (chain-slot diagonals, fused merge, 4-vector unroll — a day of tuning) at 276.26 ms, ran
+the **plain scalar oracle** on the A78C at 908.60 ms, and published *"one NSP is 3.29× the 8-core
+cluster on the harder configuration."* I knew the A78C row was the untuned oracle — my own note said
+*"the oracle compiles as-is"* — and quoted the ratio anyway, because it was a strong number and both
+rows were individually honest.
+
+95emulator asked for tier parity before the deck pass. Their tuned NEON build on the same A78C:
+**211.86 ms — faster than the NSP.** The headline did not sharpen; it **inverted** (cluster leads
+1.30×). At matched tiers Config B looks like Config A, and the entire "this configuration is
+DSP-shaped" narrative dissolved. What survives is the per-engine claim (one NSP ≈ 1.60× one A78C
+core at parity) — a much smaller and different statement.
+
+⭐ **Why this is its own rule and not M59:** M59 is about matched *configurations* (same D, same
+scene). This is matched *effort*. Every row can be individually impeccable — hash-gated, correctly
+sampled, honestly labelled — and the **ratio between rows is still meaningless** if one side got a
+day of optimisation and the other got `gcc -O3`. The tier is invisible in the numbers themselves;
+it lives in the provenance. So: every cross-platform row carries a tier tag (*oracle / tuned /
+vendor-library / hand-optimised*), and a ratio may only be quoted between rows of the SAME tier.
+A cross-tier ratio is not a comparison; it is a measurement of how much tuning one side received.
+
+⚠️ **The seduction profile, for recognition:** a cross-tier ratio always flatters whichever platform
+you just spent effort on — which is usually the one you are rooting for. It arrives at the exact
+moment of maximum investment and pride in the port. Both times this campaign produced a
+too-good-to-be-true platform headline (18.7× against the DSP, 3.29× for it), the number was real
+arithmetic on honest rows and wrong as a *comparison* — in opposite directions, which is the tell
+that the artifact tracks effort, not silicon.
 
 ## AMENDMENT
 
