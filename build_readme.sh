@@ -5,7 +5,7 @@
 # adding a rule, a checker or a harness program; CI should fail if the diff is dirty.
 set -euo pipefail
 cd "$(dirname "$0")"
-RULES=$(grep -c '^\*\*M[0-9]' RULES.md)
+RULES=$(grep -cE '^(\*\*|#{1,6}[[:space:]]+)M[0-9]' RULES.md)
 CHECKERS=$(ls checkers/*.py | wc -l | tr -d ' ')
 HARNESS=$(ls harness/ | wc -l | tr -d ' ')
 FAILURES=$(grep -c '^### ' FAILURES.md)

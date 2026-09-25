@@ -1805,6 +1805,444 @@ too-good-to-be-true platform headline (18.7× against the DSP, 3.29× for it), t
 arithmetic on honest rows and wrong as a *comparison* — in opposite directions, which is the tell
 that the artifact tracks effort, not silicon.
 
+---
+
+**M62 — A LAUNCH THAT NEVER HAPPENED IS INDISTINGUISHABLE FROM ONE THAT IS STILL STARTING. Confirm a
+background run from its ARTIFACT — file existence and mtime — never from a process check, and never
+from the absence of an error.**
+
+Three times in one session (2026-09-02) a detached run was reported as alive when it was dead, and
+each diagnosis failed the same way:
+
+- `pgrep -f run_sweep.py` **matched its own shell command**, which contained the string. The check
+  returned "alive" while nothing was running. The same self-match had already occurred hours earlier
+  with a different agent, in the same session, after being written up.
+- `nohup … &` inside a tool call that later **timed out** took the child down with the process group.
+  The launch printed no error because the shell that would have printed it was gone.
+- An `ssh host '… & disown'` returned successfully and started nothing, because the remote command
+  died with the terminated connection.
+
+In all three the console said what a healthy start says: nothing.
+
+⭐ **The reliable tell is the OUTPUT FILE.** `stat -c %y` on the results path, compared against the
+clock, answers "is this running?" in one line and cannot self-match, cannot be fooled by a process
+name, and cannot be satisfied by a launcher that exited. A run that has not written in a minute is
+not running, whatever `ps` says.
+
+⭐ **The fix for the launch itself is `setsid`**, plus a launcher script that returns immediately, so
+the work is reparented away from the invoking connection before that connection can die.
+
+⚠️ **Why this rates a rule rather than a note:** the failure is silent, it presents as patience, and
+the natural check for it is the one that does not work. Every instance above cost real time, and one
+of them was reported to the user as progress.
+
+---
+
+**M63 — A KNOB SET IN THE WRONG PLACE DOES NOTHING, SILENTLY, AND THAT IS INDISTINGUISHABLE FROM A
+KNOB THAT DID NOT HELP. Before concluding "I tried X and it didn't fix it", prove X was actually
+APPLIED.**
+
+Cost on 2026-09-02: an Orin GPU row, twice abandoned.
+
+`llama-mtmd-cli` aborted with `CUDA error: out of memory` at ~0.077 s on every image size, with
+33 GB free and all 29 LLM layers already offloaded successfully. I tried `GGML_CUDA_NO_VMM=1` in
+the environment, saw no change, and concluded the VMM pool was not the cause. On that basis I
+wrote up a **defect in an old llama.cpp snapshot**, rebuilt from current upstream to confirm it,
+watched it fail identically, and reported the GPU row as blocked.
+
+⭐ **`GGML_CUDA_NO_VMM` IS A CMAKE OPTION, NOT A RUNTIME ENVIRONMENT VARIABLE.** Exporting it does
+exactly nothing. The knob was never turned. Rebuilding with `-DGGML_CUDA_NO_VMM=ON` fixed it on
+the first try, and the GPU row came back at 1196 t/s.
+
+⚠️ **What made this expensive is that the failed attempt produced EVIDENCE.** "I disabled VMM and
+it still failed" is a strong-looking exclusion that pointed the investigation away from the actual
+cause and toward an invented one — a stale-snapshot defect I then spent a full rebuild confirming.
+A test that never ran does not return "inconclusive"; it returns a confident wrong answer in
+whichever direction you were already leaning.
+
+🔴 **AND THE REAL CAUSE WAS READABLE THE WHOLE TIME, in the lines I was filtering out.** My grep
+took `cuda error|out of memory` and dropped the two lines under them:
+
+    in function alloc at ggml-cuda.cu:595
+    cuMemAddressReserve(&pool_addr, CUDA_POOL_VMM_MAX_SIZE, 0, 0, 0)
+
+That names the mechanism outright — reserving a large VIRTUAL ADDRESS RANGE, which Tegra unified
+memory refuses. Not exhaustion, which is why it was size-independent and why free memory was
+irrelevant. **A filter tuned to the symptom hid the diagnosis.**
+
+⭐ **THE ACT:** for any setting that might be build-time — CMake options, compile flags, kernel
+config, driver params — confirm it took (`grep` the CMakeCache, check the built artifact, read the
+banner) BEFORE letting a null result become evidence. And when a run fails, read the WHOLE error
+block once at full width before grepping it.
+
+---
+
+**M64 — THE POWER REGIME IS AN INPUT THE USER DECLARES, NOT A PROPERTY YOU INFER. Every run is
+LUDICROUS SPEED, DYNAMIC, or LOW POWER — ask which, record it with the number, and if you believe
+you are at ludicrous speed and see dispersion, YOUR CLOCKS ARE MOVING AND YOU ARE NOT.**
+
+⭐ **THE THREE REGIMES, and the point is that they are a QUESTION FOR THE USER:**
+
+| regime | what it means | how you get there |
+|---|---|---|
+| **LUDICROUS SPEED** | every clock pinned at maximum; the silicon's ceiling | `jetson_clocks` · `perf_profile: burst` · governor `performance` |
+| **DYNAMIC** | DVFS free-running; what a real deployment usually does | the default, and almost never what a benchmark wants |
+| **LOW POWER** | a capped mode chosen deliberately (thermal, battery, budget) | `nvpmodel -m <n>` · a capped profile |
+
+**Which one a run should be in is a DECISION ABOUT THE QUESTION BEING ASKED, and it belongs to the
+person asking it.** "Peak achievable throughput" and "what this does in a fanless enclosure" are
+different questions with different right answers, and nothing in the hardware tells you which one
+was meant. **Ask. Then record the answer next to the number**, the way a census already rides along.
+An undeclared regime makes a number uninterpretable, not merely imprecise.
+
+🔴 **AND THE SELF-CHECK, which is the part that catches you lying to yourself:**
+
+> **IF YOU BELIEVE YOU ARE AT LUDICROUS SPEED AND THE RUN-TO-RUN SPREAD IS MORE THAN A COUPLE OF
+> PERCENT, YOU ARE NOT AT LUDICROUS SPEED. THE CLOCKS ARE GOING UP AND DOWN.**
+
+Dispersion is the signature of scaling clocks. The *value* tells you nothing — a throttled board and
+a pinned one both return plausible medians. The **spread** is the instrument.
+
+    Orin AGX, identical prompt, 5 reps
+      schedutil free-running : 515.6 – 571.3 ms   → 10.8% spread
+      jetson_clocks applied  : 434.2 – 437.8 ms   →  0.8% spread
+
+Bought 2026-09-02 by a 20% error across every Orin number in the corpus. Our prefill ran 17–27%
+behind a colleague team's with no explanation. I cleared every obvious cause — `nvpmodel` MAXN, 12
+cores online, GPU sampled **pegged at its 1300 MHz ceiling** under load, 47 °C against an ~85 °C
+limit, micro-batch no effect, clock ramp 56 ms and finished long before prefill — and told Kyle that
+applying `jetson_clocks` "won't move much." It moved **19–20% at every point**, putting us level
+with them at the short end and 5–10% ahead at the long end.
+
+⭐ **WHAT IT CHANGED WAS EMC — THE MEMORY CLOCK — pinned to 3199 MHz.** Prefill is bandwidth-bound;
+the GPU core clock I measured was never the binding constraint. **Checking the clock you thought of
+is not checking the clocks that matter**, and a board can be simultaneously "at max clock" and
+leaving 20% on the table. That is exactly why the regime must be DECLARED and VERIFIED rather than
+inferred from whichever counter you happened to sample.
+
+⚠️ **THE DETECTOR WAS IN MY DATA AND I READ PAST IT.** 10.8% spread was sitting in the run I was
+medianing. The O6 notes already say this outright — "the tell is a 60% stddev, not the value" — so
+this is the SECOND time the same detector has been bought on different silicon. A rule that has to
+be learned twice was not written strongly enough the first time.
+
+⚠️ **AND THE CORRECTION IS ITSELF A BIAS RISK.** The IQ-9075 CPU was unaffected — 2362 MHz against a
+2361 max, already flat out. So fixing the Jetsons moves every Qualcomm-vs-NVIDIA ratio AGAINST
+Qualcomm. The iq9's NPU has its own profiles (`/root/qnn/burst_*.json`; QNN's default is NOT
+`burst`) and is still unchecked. **Re-measure every platform in a comparison or none of them** — a
+half-applied correction looks like diligence and is worse than the original error.
+
+⭐ **ENFORCEMENT — added 2026-09-11 after M64 was RE-BOUGHT a THIRD time. THE DEFAULT IS MAX. A
+benchmark PINS CLOCKS (LUDICROUS SPEED) unless the user has EXPLICITLY authorized DYNAMIC.** "Peak
+achievable" is the default question a benchmark answers; DYNAMIC (free-running) is opt-IN, with
+permission, and TAGGED. Three failures made this necessary the third time:
+
+1. **The rule lived in the doc but not in the WORK.** The Qwen2.5-VL-7B A16W4 Orin runs (2026-09-11)
+   recorded `MAXN, DVFS free-running (not pinned)` -- honestly declared, and `power_regime_check`
+   PASSED because the regime was *named*. But declared-DYNAMIC is not benchmarked-DYNAMIC-on-
+   purpose; it was DYNAMIC-BY-OMISSION, because the agent briefs never said "pin." *A rule you do
+   not put in the brief is a rule you do not run.*
+2. **Same fingerprint as 09-02, missed again:** Orin TTFT ~1.7x a pinned reference (708 vs 419 ms)
+   while DECODE MATCHED it (20.6 vs 20.7 t/s). Decode-matches-but-TTFT-doesn't is the signature --
+   the short front-burst (ViT+prefill = time-to-first-token) rides the clock ramp / free EMC; the
+   long steady decode phase does not, so it looks fine and hides the problem.
+3. **Blast radius (M65):** the free-running TTFT nearly INVERTED a shipped verdict -- the A16W4 deck
+   said "iq9 wins TTFT," comparing an NPU (fixed burst clock) against an unpinned-DVFS Orin.
+
+THE ENFORCED FORM:
+- Every benchmark brief carries the clock instruction -- pin to max (`jetson_clocks` /
+  `perf_profile: burst` / governor `performance`), VERIFY EMC IS PINNED, not just the GPU core
+  (EMC is the binding clock for bandwidth-bound prefill/decode), and record the regime + the
+  run-to-run spread (spread > a couple % = clocks still moving).
+- A MEASURED timing record whose regime is DYNAMIC/free-running is INVALID as a benchmark unless it
+  carries an explicit `dynamic_authorized: <why>` field. `power_regime_check` must FAIL a free-
+  running benchmark that lacks that authorization -- not merely require the regime be named.
+- NPU-vs-GPU comparison: the NPU runs a fixed burst clock, so the GPU MUST be pinned too, or the
+  comparison is rigged against whichever side is on DVFS. Re-measure every platform pinned, or none.
+
+---
+
+**M65 — A CHANGED VALUE HAS A BLAST RADIUS. NAME IT, SAY WHAT GOES INCONSISTENT IF IT IS NOT
+FOLLOWED, AND LET THE USER DECIDE. Do not silently propagate, and do not silently skip.**
+
+When you edit a measurement, a number, or a claim that other parts of a deliverable **depend on to
+produce their own results or analysis**, that edit is not finished when the cell changes. Every
+downstream table, ratio, fit, caption, cross-reference and prose sentence built on the old value is
+now either stale or orphaned.
+
+⭐ **THE OBLIGATION IS DISCLOSURE, NOT AUTOMATIC REPAIR.** Say plainly:
+
+1. **what changed**, and
+2. **what else depends on it** — name the specific sections, tables and derived figures, and
+3. **what will be inconsistent if the rest is not updated**, and
+4. **what it costs** to follow through.
+
+Then **stop and let the user choose.**
+
+🔴 **DO NOT ASSUME THEY WANT FULL PROPAGATION.** They may want exactly the one value changed —
+because they are shipping in an hour, because they are only sending the summary, because the rest of
+the document is being rewritten anyway, or because a partly-stale artifact they understand is worth
+more than a consistent one that arrives too late. **That is their call and it is frequently the
+right one.** Propagating unasked can cost hours and can churn sections they were about to discard.
+
+🔴 **AND DO NOT SILENTLY SKIP.** An artifact whose parts disagree, handed over without warning, is
+worse than either option — the reader finds the contradiction and stops trusting everything, and the
+one number that WAS right is discredited along with the rest.
+
+⚠️ **THE FAILURE IS NOT RARE — IT IS THE DEFAULT.** On 2026-09-02/03, one deliverable produced five
+instances in a single evening:
+
+| the edit | what it silently broke |
+|---|---|
+| Thor re-measured pinned | "green rows are like-for-like" became FALSE — regimes no longer matched |
+| DYNAMIC rows purged | two notes told the reader to "recompute from Sheet 1" rows that no longer existed |
+| a summary block added | **its own five rows were never in the results sheet at all** |
+| image tokens 396 -> 394 | corrected in one sheet, still wrong in three other places |
+| a ratio 342x -> 499x | corrected in the summary, stale everywhere else |
+
+Two adversarial review passes caught most of these. **The worst one — a headline claim whose
+supporting rows were absent from the results sheet — was caught by the USER asking "did you update
+the results sheet too?"** Both reviewers had audited what was IN the workbook against the raw data;
+neither asked whether the summary's own evidence was present. The blast radius of an ADDITION is as
+real as that of a change, and it is easier to miss because nothing looks wrong.
+
+⭐ **THE ACT:** before reporting an edit complete, grep the corpus for the old value, for anything
+derived from it, and for prose that describes it. Then tell the user what you found and what you
+propose. One sentence — *"this also affects X, Y and Z; leaving them costs an inconsistency between
+A and B; fixing them costs N minutes; which do you want?"* — is the whole rule.
+
+---
+
+**M66 — A NORMALISED AXIS IS A FOOTGUN IN A COMPARISON CHART. If the reader must read the caption
+to avoid the wrong conclusion, the CHART is wrong — not the reader.**
+
+Normalising each series to its own peak (`% of own peak`, `÷N to share an axis`, "indexed to 100")
+answers exactly one question — **"does this curve fall?"** — and destroys another the reader will
+ask anyway: **"which one is bigger?"** The eye reads vertical position as magnitude. It will do that
+before it reads the title, and it will never stop doing it.
+
+⚠️ **MEASURED FAILURE, TWICE IN ONE SESSION, WITH THE CAVEAT ALREADY PRINTED ON THE CHART:**
+
+| chart | what the caption said | what the user concluded | the truth |
+|---|---|---|---|
+| iq9 (int8) vs Orin (fp16), absolute | "heights are not comparable — precision differs" | *"NVIDIA is only a little bit more performant than iq9"* | Orin is **3.5×** faster at equal precision (fp16) |
+| Thor vs Orin, each ÷ own peak | "this chart is about SHAPE, not speed" | *"there's no way Thor falls below Orin — it can't"* | Thor is **3.2–4.4× ABOVE** Orin at every point; it never falls below |
+
+Both captions were correct, prominent, and ignored — **because the picture said otherwise.** In the
+second case the reader was right on the physics and the chart was simply lying to them: Thor's 88%
+was 66.5 TFLOP/s and Orin's 100% was 20.8.
+
+⭐ **THE ACT — three parts, all of them:**
+
+1. **Absolute comes first and carries the comparison.** Put it in the left/primary panel, on a
+   **like-for-like basis** (same precision, same batch, same runtime). If no like-for-like basis
+   exists, there is no comparison to draw — say so instead of drawing one.
+2. **Shape goes in its own panel, titled as not-a-ranking**, with each series' **absolute peak
+   printed in its own legend entry** so `100%` cannot be read as parity.
+3. **A series with no fair basis is EXCLUDED from the absolute panel**, not included with a
+   disclaimer. An int8 height beside fp16 heights is a mixed-tier comparison (LAW 1) whether or not
+   a footnote admits it.
+
+**Corollaries:**
+- **Never draw a threshold band that does not apply.** Bands measuring *drop from peak* on a curve
+  whose peak is the LAST point put a rising line inside a "cliff" band — the exact opposite of the
+  truth. (Caught 2026-09-03 on the resolution ladder.)
+- **`÷N to fit one axis` is the same footgun** and needs the same treatment.
+- **Log axes compound it** — they flatten the divergence the chart exists to show. Kyle, 2026-09-03:
+  *"keep away from log scales. humans don't read those very well."*
+
+**THE TEST, before any chart ships:** cover the title, caption and footnotes, look only at the
+plotted lines, and write down what you would conclude. If that differs from the claim, redraw it.
+
+---
+
+**M67 — ANSWER THE QUESTION IN THE WORDS IT WAS ASKED, BEFORE ANY TABLE. A results matrix is
+evidence, not an answer.**
+
+Kyle, 2026-09-04, on the first sheet of the int16 deliverable: *"I REALLY like the first sheet.
+we need to make that a template of sorts. it explicitly writes it all down in clear language."*
+
+Our workbooks are good at tables and bad at answers. Someone asks a question in their own words
+and we hand back a matrix, leaving them to locate the answer inside it — which means the reader
+does the synthesis, and every reader does it differently. **Sheet 0 of any deliverable is the
+answer in prose.** Implemented and enforced by `tools/answer_sheet.py`.
+
+⭐ **THE SIX PARTS, and the rule each one exists to enforce:**
+
+| part | the rule |
+|---|---|
+| **YOU ASKED** | their question **VERBATIM**. Paraphrasing is where you quietly swap their question for the one you would rather answer |
+| **SHORT ANSWER** | **ONE sentence**. If it needs two, you have two answers and must say so explicitly |
+| **THE POINTS** | numbered CLAIM + EVIDENCE, never a claim alone. **Exactly one ⭐** — the thing they keep if they read nothing else. Caveats that CHANGE the answer are **⚠️ and live here**, not in a footnote |
+| **WHAT WE SUGGEST** | an action they can take, naming the sheet that supports it |
+| **WHAT WOULD CHANGE THIS** | what we did **not** establish, and what would settle it |
+| **WHERE THE EVIDENCE IS** | sheet → what lives there, so they can **verify rather than trust** |
+
+**Two rules are enforced in code, not in review** (`answer_sheet.py` raises):
+- **exactly one ⭐** — two headlines is zero headlines
+- **a one-sentence SHORT ANSWER** — a multi-sentence "short answer" is a summary wearing a
+  disguise
+
+Its `--self-test` plants four violations (two stars, zero stars, a three-sentence answer, and a
+valid spec) and fails if any is accepted; it is wired into `presend.py`.
+
+⚠️ **WHAT WOULD CHANGE THIS is the part most likely to be dropped, and the most valuable.** A
+deliverable that cannot be wrong is a brochure. On the int16 workbook it is where "we ported AI
+Hub's RESULT, not its ALGORITHM, so it will not generalise to another model" lives — the single
+sentence that stops a reader over-applying the finding.
+
+---
+
+**M68 — A CROSS-DOCUMENT REFERENCE MUST NAME ITS TARGET. The test is whether the RECIPIENT can
+resolve it, not whether the file is in the send set.**
+
+Kyle, 2026-09-04, reading a finished deliverable: *"on the updates your sheet 6 tab, not sure
+what this is? i haven't sent anything to my colleague yet. what is sheet 6?"*
+
+"Sheet 6" meant tab `6. Accuracy (mAP)` of a **different** workbook shipped three weeks earlier.
+Inside a standalone document it pointed at nothing — and it collided with the document in hand,
+whose own tabs ran 1–5, so the reader went looking for a sixth tab. It was wrong three ways at
+once: it **named nothing**, it said *"YOUR sheet 6"* about a workbook **we** sent **them**, and
+it **collided** with the reader's own document.
+
+⭐ **THE RULE IS RESOLVABILITY, NOT PRESENCE.** Kyle named the trap when he asked for this rule:
+
+> *"we have 3 docs and we update a single one. the other 2 are already sent and we're not changing
+> them. so if doc 1 references doc 2 or 3 and it's not in the corpus deliverable we are sending,
+> then it'll flag 'i don't see the referenced document'"*
+
+He is right, and that checker would be **wrong**. Referring to a document you are not resending is
+normal and correct. **Never require the referenced document to exist, to be attached, or to be in
+the send set.** Require only that the reference carries enough identity — a filename, a date, or
+both — for the recipient to find it in their own inbox.
+
+| | |
+|---|---|
+| ❌ | "as shown in sheet 6" |
+| ✅ | "tab `6. Accuracy (mAP)` of `Foo.xlsx`, sent 2026-08-20" |
+
+**and the ✅ form is identical whether or not `Foo.xlsx` is being resent.**
+
+**Enforced by** `tools/cross_reference_check.py`, wired into `presend.py`. Its `--self-test` plants
+nine cases including Kyle's exact false positive as a **must-not-fire**. Two further false-positive
+classes it must not trip, both found by planting rather than reading:
+- **"sheet N" where N IS one of this document's own tabs** is internal navigation, not a
+  cross-reference. A checker that fires on correct internal pointers gets switched off.
+- **FROZEN (already-shipped) artifacts** are reported but do **not** fail the gate — editing one is
+  a deliberate re-ship, not a gate fix.
+
+⚠️ **AN ADVERSARIAL REVIEW DOES NOT CATCH THIS CLASS.** A hostile expert pass over the same
+deliverable found nine real defects and missed "sheet 6" entirely — because it read with **full
+context** and could resolve the reference itself. The recipient cannot. **A hostile-expert check
+is not a fresh-reader check**, and running the first while assuming it covers the second is how
+this shipped.
+
+---
+
+## PART VII — POWER / EMULATION RULES (M69–M73, from the QEMU power-modeling corpus)
+
+*Earned 2026-09-08/09 in the i.MX95 QEMU power-modeling work (95emulator session), all fitting the
+same thesis: a broken run is a cheap run, and the surviving errors flatter the story you already told.
+Every one is reconstructable from commits — the wrong versions are kept in history on purpose.*
+
+**M69 — EXECUTION IS A MEASUREMENT PRECONDITION, NOT AN ASSUMPTION.**
+Two of fifty apps drew ~324 mW vs ~500 typical and were published as the model's 52% worst case, with a
+plausible mechanism ("the ALU proxy overstates stall-heavy code"). They carried unquoted shell
+metacharacters and **died on every iteration** — the meter measured a shell failing in a tight loop. Power
+was low because *nothing executed*. ⚠️ The dangerous part was the EXPLANATION, not the bug: a plausible
+mechanism that fits the evidence is how a broken run survives review — it stops people looking. The two
+apps were the only ones below 1200 mW — sitting on the idle floor, which is exactly what "nothing ran"
+looks like. Re-run quoted: 6% and 11%, inside the normal band; the 52% vanished.
+**CHECK:** record exit code, iteration count, and per-iteration duration for every run. A workload that
+did not run is indistinguishable from one that ran cheaply — and a low power number is in the flattering
+direction. Never let a mechanism-story substitute for proof the workload executed.
+
+**M70 — A RATE THAT EXCEEDS THE CLOCK IS THE ONLY FREE ORACLE YOU GET.**
+A calibration workload reported 2,687,121,103 Mops/s; `-O2` had elided the entire ALU loop (a local whose
+only use was a dead branch), while the op *counter* still incremented — the model would have been fitted to
+a workload that never ran. Caught ONLY because the rate exceeded the 1.8 GHz clock by six orders of
+magnitude. A plausible-looking wrong number would have sailed straight through.
+**CHECK:** bound every derived rate by a physical ceiling (clock, lane count, peak BW) and assert it. Kill
+dead-code elimination with a volatile sink + asm barrier; verify the rate scales 1x/2x/3x with thread count.
+
+**M71 — A RATIO NEEDS A DENOMINATOR FLOOR.**
+A gate printed "ratio infx PASS" for the prediction "DRAM rails discriminate the two workloads by >=10x."
+Its inputs were **both negative** (-0.29 and -0.57 mW — the memory workload's DRAM sat *below* the idle floor
+because caches were disabled and it could not stream); dividing by a near-zero denominator gave infinity,
+which passed >=10x. The prediction was also mis-worded: it asked for a ratio whose denominator the
+prediction ITSELF expected to be ~zero.
+**CHECK:** if a prediction expects the denominator to be ~zero, the ratio form is invalid — state it as
+"A rises, B does not," and make the checker report NULL rather than compute. Never compare a magnitude that
+can go negative as if it were a rate.
+
+**M72 — A CONTROL MUST BE ABLE TO ENTER THE REGIME IT EXPLAINS.**
+Fixing QEMU's L1D geometry (16 KB/8-way -> real 32 KB/4-way + L2) changed the miss count by 18 in 5.2 million
+(0.0003%) — a 256 MiB stream misses at every level regardless of size or associativity. **The workload was
+blind to the parameter being corrected**; it would have "confirmed" a correct geometry as happily as it
+refuted the fix. (Real cause: no write-streaming model — QEMU counts line allocations the A55 skips for
+full-line writes; a constant 1,048,981 excess = one memset over the buffer.)
+**CHECK:** before trusting a null/negative result, prove the instrument CAN produce the positive one — that
+the control can actually enter the regime it is supposed to discriminate. Relates to [[verify-the-variable-moved]].
+
+**M73 — A HIGH R² ON COLLINEAR PREDICTORS IS NOT EVIDENCE.**
+A power fit scored R²=0.9984 with **negative** coefficients on both ALU rate and bandwidth — more work
+drawing less power — because a grid trimmed from 11 points to 7 reintroduced collinearity. A linear DRAM fit
+scored a lower R²=0.9677 but with an intercept 98% above an independently measured idle floor (n=5).
+**CHECK:** never read R² alone. Check the SIGNS of the coefficients against physical sense, and check the
+intercept against any independently measured baseline. A great fit with impossible signs is a collinearity
+artifact, not a model.
+
+---
+
+## PART VIII — CROSS-BOARD / DERIVATION RULES (M74–M75, from the VLA e2e + 6-camera corpus)
+
+*Earned 2026-09-09 in the driving-VLA end-to-end and 6-camera scaling work (qualcomm session).*
+
+**M74 — IF A RECORD DIRECTLY MEASURED THE QUANTITY, USE IT — DO NOT RE-DERIVE ACROSS A MISMATCHED BASE.**
+A 6-camera end-to-end cost was shown as single-cam-e2e × the measured multiplier = 1.1 s on the 5090 — but
+the 6-cam record had *directly measured* 1.7 s, and the single-cam base came from a *different* config
+(vision-light 613 ms vs the vision-inclusive 996 ms of the 6-cam run). The re-derivation understated the
+real number **in the flattering direction**, and it was committed by the person who wrote these rules.
+**CHECK:** when a directly-measured value exists in the record, publish that — a DERIVED value multiplied
+onto a base from a different configuration is not a substitute, and its error has a preferred direction.
+Cross-condition multipliers are valid only within their own run.
+
+**M75 — VERIFY THE WORLD BEFORE RECORDING AN ASSERTED FAILURE.**
+A coordinator told a sub-agent a run had DIED and to record it as failed. The agent checked the actual board
+first, found the output file present with the gate passed — the run had SUCCEEDED (the ssh *stream* had
+timed out after a 21-minute compile warmup) — and refused to fabricate a failure. Had it obeyed, the record
+would carry a false "DIED" for a run that worked.
+**CHECK:** a "it failed / it died" claim — even from the coordinator — is a hypothesis, not a datum. Verify
+the artifact on the machine before recording a failure. An instruction to record an outcome does not
+override the outcome. Relates to [[never-sigkill-accelerator-process]], [[harness-indicts-the-vendor]].
+
+---
+
+## PART IX — GENERATED-ARTIFACT PROVENANCE (M76, from the rule-count self-audit corpus)
+
+*Earned 2026-09-24 in a cross-session rule-count dispute. Two independent sessions disagreed on how many
+rules this file held; one cited "count_sync says 68, and the document's preamble says 68, so 68." The
+preamble's 68 had been WRITTEN BY count_sync. The generator and its output were treated as two witnesses
+when they were one, and both were wrong: seven rules (M69–M75) used `###` headings the counter's regex
+never matched — invisible to the generator, therefore invisible to the prose it generated, and — the same
+drift — never cited by a single checker. The tie was broken only by an independent read of the file.*
+
+**M76 — A GENERATED FIGURE IS VERIFIED ONLY AGAINST THE ARTIFACT IT DESCRIBES, NEVER AGAINST ITS
+GENERATOR. If the generator is the figure's only witness, the figure is UNCHECKED.**
+
+A count, a total, a caption, a summary line — any figure emitted by a program that reads a source — agrees
+with that program by construction. That agreement feels like corroboration and is structurally the opposite:
+*two halves of one program are one witness.* When the generator has a blind spot, the artifact it writes
+inherits it silently, and every downstream copy of the figure carries the same blind spot wearing the
+authority of a printed number. This is the same failure as a host and guest hashing with the same typo'd
+basis: they agree perfectly and reproduce nothing anyone else can.
+**CHECK:** the only thing that can falsify a generated figure is an INDEPENDENT read of the artifact it
+claims to describe — by a different tool, a different regex, or a human — not a re-run of the generator.
+A checker that both PRODUCES a figure and ASSERTS it is inert against its own blind spot; pair it with a
+reader that does not share its code. And when one document is authored by another (a preamble written by a
+counter), never quote the two to each other as agreement. Relates to [[m44-verify-the-rendered-artifact]],
+[[gate-inert-by-wiring.md]], [[whole-tensor-cosine-is-blind]], [[inert-checker-law]].
+
+
 ## AMENDMENT
 
 This document is amended by *finding a new way to be wrong*, not by opinion. Adding a rule requires
