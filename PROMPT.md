@@ -10,7 +10,7 @@ Adapt the bracketed parts. Keep the rest — especially the gating rule, which i
 
 ```
 You are going to run hardware benchmarks for me and report the results. Before you measure
-anything, adopt these working rules. They come from github.com/kylefoxaustin/broken-is-faster,
+anything, adopt these working rules. They come from github.com/kylefoxaustin/rules-of-engagement,
 where each one cites the specific defect that motivated it. Read RULES.md if it is available
 to you.
 

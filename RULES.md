@@ -2243,6 +2243,54 @@ counter), never quote the two to each other as agreement. Relates to [[m44-verif
 [[gate-inert-by-wiring.md]], [[whole-tensor-cosine-is-blind]], [[inert-checker-law]].
 
 
+
+⭐ **AND A COUNT IS A CLAIM ABOUT A SET — a generated count certifies only the FILE it counted, never that
+that file is the whole CORPUS.** The 45→61 and 61→75 rule-count syncs were the same event twice: a generator
+that faithfully regenerates a count from `RULES.md` still cannot notice that `RULES.md` is not the complete
+set of rules — the generator and its output are one witness (above). A *completeness* claim therefore needs a
+SECOND, INDEPENDENT enumeration: diff the rule-ID SET against another source, and assert the IDs are
+contiguous and unique. A count that only re-reads its own file will certify a truncated corpus as whole.
+(Credit: WChat, external review, 2026-09-25.)
+
+---
+
+## PART X — REVIEW & INSTRUMENT INTEGRITY (M77–M78)
+
+*Earned 2026-09-25 — from an external cross-model review (WChat, in NXP Vero Studio, inferring only from the
+public repo) and the rt1180 emulation corpus: two ways an honest instrument or an honest reviewer still
+points you wrong.*
+
+**M77 — A REVIEW MUST DECLARE THE GENRE AND STANDARD IT IS GRADING AGAINST, BEFORE ITS FINDINGS. A review
+that cannot name what it graded against is not actionable.**
+
+A hostile ISO 26262 assessor-style review of a POSITIONING paper — a document that never claimed to be a
+safety-case input — drove it 4,877 → 12,032 words over three revisions before it settled at 10,399. Every
+finding was individually true. The real damage was not the word count: for a while the author believed his
+whole plan for the document was wrong — because a review graded against the wrong standard is
+indistinguishable from a genuinely devastating one. Both open *"I would not accept this,"* and only the
+declared frame separates them. A genre-mismatched review changes the human's decisions, which is worse than
+a bloated document.
+**CHECK:** every adversarial pass — an outside review, a Fable, a cross-model audit — states UP FRONT the
+genre it is treating the artifact as, and the standard it grades against. Findings are then triaged by
+whether that frame fits this artifact, instead of each true-in-isolation finding being actioned as if the
+frame were settled. A review whose frame is unstated is not yet actionable — ask for the frame before the
+fix. Relates to [[m67-answer-the-question-in-the-words-asked]], [[cross-corpus-fable-timing]].
+
+**M78 — AN INSTRUMENT'S NAME IS NOT ITS SEMANTICS. VERIFY IT READS THE QUANTITY YOU THINK, NOT MERELY THAT
+IT RUNS.**
+
+An emulator property named `MPUEnabled` was read to decide whether the memory-protection unit was on. It
+actually reads `cp15.c1_sys` — an ARMv7-A/R system register that does not exist on the Cortex-M33, so it
+returns 0 regardless of the real MPU state. The bug survived because its POSITIVE CONTROL PASSED: the
+instrument ran perfectly, returned a clean value, and pointed at the wrong register. A working instrument
+that measures the wrong thing looks exactly like a working instrument that measures the right thing.
+**CHECK:** for every named signal, confirm what it is physically wired to on THIS target, not what its name
+implies — a passing positive control proves the instrument executes, never that it reads the semantic you
+intend. Cross-check against an independent path (a second register, a known-state stimulus) that would
+DISAGREE if name and semantics have diverged. Relates to [[verify-the-variable-moved]],
+[[m70-a-rate-that-exceeds-the-clock]], [[capability-denial-retest-before-belief]].
+
+
 ## AMENDMENT
 
 This document is amended by *finding a new way to be wrong*, not by opinion. Adding a rule requires

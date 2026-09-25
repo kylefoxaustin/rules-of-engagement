@@ -63,8 +63,8 @@ It targets the failure modes that are specific to that situation:
 ## Quick start
 
 ```bash
-git clone https://github.com/kylefoxaustin/broken-is-faster
-cd broken-is-faster
+git clone https://github.com/kylefoxaustin/rules-of-engagement
+cd rules-of-engagement
 ./build_readme.sh          # regenerates this file's counts from source — see M44
 cat PROMPT.md              # paste this into your agent to start it benchmarking
 ```

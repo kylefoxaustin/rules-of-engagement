@@ -36,7 +36,7 @@ from a model producing garbage is worth nothing, and it is worth *less* than not
 
 ## What this is
 
-A harness plus 76 rules of engagement, 11 checker programs, and 20 harness
+A harness plus 78 rules of engagement, 11 checker programs, and 20 harness
 programs, for the situation where **an AI agent is running your benchmarks unattended** and you have
 to decide whether to believe the report it hands you.
 
@@ -63,8 +63,8 @@ It targets the failure modes that are specific to that situation:
 ## Quick start
 
 ```bash
-git clone https://github.com/kylefoxaustin/broken-is-faster
-cd broken-is-faster
+git clone https://github.com/kylefoxaustin/rules-of-engagement
+cd rules-of-engagement
 ./build_readme.sh          # regenerates this file's counts from source — see M44
 cat PROMPT.md              # paste this into your agent to start it benchmarking
 ```
@@ -82,7 +82,7 @@ Run the checkers against a deliverable you already have. **Expect it to hurt** �
 | path | what it is |
 |---|---|
 | `PROMPT.md` | the starter prompt — paste into your agent |
-| `RULES.md` | 76 rules, each citing the defect that motivated it |
+| `RULES.md` | 78 rules, each citing the defect that motivated it |
 | `FAILURES.md` | 31 failures, in detail, with how each was caught |
 | `checkers/` | 11 programs that read finished artifacts and refuse to pass them |
 | `harness/` | 20 programs that run at measurement time — gates, porch protocol, samplers |
