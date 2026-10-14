@@ -190,6 +190,22 @@ yet cover.
 
 ---
 
+## Fleet standing orders — the short version, for your agents' session start
+
+[`FLEET-STANDING-ORDERS.md`](FLEET-STANDING-ORDERS.md) is the condensed law that every AI session in
+the fleet that produced this repo is handed at the start of each session, verbatim. Two laws:
+
+1. **Every number carries a provenance tag** — MEASURED / DERIVED / SOURCED — and **a DERIVED or
+   SOURCED number is never compared against a MEASURED one.**
+2. **Honor the reservation, clean up after yourself** — hard-lock a shared board or don't run, and
+   prove at release that you left nothing behind.
+
+`RULES.md` is the full corpus and the why; this file is what fits in an agent's context every time.
+To use it, inject it into your agents' session-start context (for Claude Code, a `SessionStart`
+hook that prints it as `additionalContext`) and edit it to fit your fleet. The copy here is kept
+byte-identical to the one the fleet actually runs, so it is a record of the real rules, not a
+cleaned-up version of them.
+
 ## Contributing
 
 The valuable contribution is **a failure**, not a feature. If a rule here missed something on your
