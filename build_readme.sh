@@ -6,8 +6,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 RULES=$(grep -cE '^(\*\*|#{1,6}[[:space:]]+)M[0-9]' RULES.md)
-CHECKERS=$(ls checkers/*.py | wc -l | tr -d ' ')
-HARNESS=$(ls harness/ | wc -l | tr -d ' ')
+# Count PROGRAMS, not directory entries: `ls harness/` counted __pycache__ the first time anyone
+# ran a self-test, and the README silently became "21 harness programs" (2026-10-14).
+CHECKERS=$(find checkers -maxdepth 1 -type f -name '*.py' | wc -l | tr -d ' ')
+HARNESS=$(find harness -maxdepth 1 -type f \( -name '*.py' -o -name '*.sh' \) | wc -l | tr -d ' ')
 FAILURES=$(grep -c '^### ' FAILURES.md)
 
 # M76 corpus-parity: a generated count certifies the FILE, not that the file IS the corpus.

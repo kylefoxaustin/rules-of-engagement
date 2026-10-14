@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+# Written by every checker run (schema/campaign_log.py) — your log, not the repo's.
+campaign/events.jsonl

@@ -42,7 +42,7 @@ import re
 import sys
 
 try:
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "schema"))  # published layout: shared modules live in schema/
     from campaign_log import log_event as _log_event
 except Exception:
     def _log_event(*a, **k):

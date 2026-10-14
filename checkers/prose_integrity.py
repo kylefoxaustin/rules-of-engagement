@@ -43,6 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BENCH = os.path.dirname(HERE)
 RESULTS = os.path.dirname(BENCH)
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "schema"))  # published layout: shared modules live in schema/
 try:
     from campaign_log import log_event as _log_event
 except Exception:

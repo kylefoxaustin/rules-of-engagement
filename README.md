@@ -1,11 +1,79 @@
 # Broken Is Faster
 
+*rules-of-engagement — measurement rules for hardware benchmarks run by an AI agent*
+
 **A measurement harness for benchmarking hardware with an AI agent — built out of the specific ways
 one got it wrong.**
 
 Every rule here exists because a real benchmark produced a real wrong number, on real silicon, and
 something later disagreed with it. Nothing in this repo is a best practice someone thought sounded
 sensible. It is a failure register with enforcement attached.
+
+| | |
+|---|---|
+| **For** | engineers who let an AI agent (Claude Code or similar) run hardware benchmarks unattended, and then have to decide whether to believe its report |
+| **You get** | 78 rules each tied to a real defect · 11 checkers with negative controls · a starter prompt · a one-page session-start law for your agents |
+| **Start** | [Quick start](#quick-start) · [`PROMPT.md`](PROMPT.md) · [`FLEET-STANDING-ORDERS.md`](FLEET-STANDING-ORDERS.md) · [`RULES.md`](RULES.md) |
+
+---
+
+## Quick start
+
+Needs `git`, `bash` and **Python 3.10+** (tested on 3.10). The checkers are standard-library only —
+nothing to install. One harness self-test also wants `numpy`; without it, that test is skipped and
+says so.
+
+```bash
+git clone https://github.com/kylefoxaustin/rules-of-engagement
+cd rules-of-engagement
+./verify.sh --self-test     # every negative control — ends ALL CLEAR (SELF-TESTS PASS without numpy)
+```
+
+A **negative control** feeds a checker a known defect and confirms it fails. It is the part most worth
+copying: a gate that has never been shown to fail is not a gate.
+
+`./verify.sh` with no flag also runs every checker against *your* campaign data. On a fresh clone there
+is none, so it ends `INERT` (exit 2) and lists what it could not check — by design: a check with
+nothing to look at is not a pass.
+
+## Adopt it in three steps
+
+**1. Give your agent the working rules before it measures anything.** Paste [`PROMPT.md`](PROMPT.md)
+into whichever assistant will run your benchmarks. It sets the rules before the first measurement,
+which is the only moment doing so is cheap.
+
+**2. Put the short law in every session's context, automatically.**
+[`FLEET-STANDING-ORDERS.md`](FLEET-STANDING-ORDERS.md) is the condensed version every AI session in
+the fleet that produced this repo is handed at session start. Two laws: **every number carries a
+provenance tag** (MEASURED / DERIVED / SOURCED — and a DERIVED or SOURCED number is never compared
+against a MEASURED one), and **honor the reservation, clean up after yourself**. For Claude Code:
+
+```bash
+mkdir -p ~/.claude && cp FLEET-STANDING-ORDERS.md ~/.claude/standing-orders.md
+```
+
+then add a `SessionStart` hook to `~/.claude/settings.json` (merge it into your existing `"hooks"` if
+you have one):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "cat ~/.claude/standing-orders.md" } ] }
+    ]
+  }
+}
+```
+
+Start a new session and ask it what its standing orders are; it should quote both laws. For another
+agent, prepend the file to its system prompt or startup context. The file names its author and
+"Claude" because it is the real fleet law, not a template — your copy is yours to edit. The copy in
+this repo is kept byte-identical to the one that fleet runs, so it is a record of the real rules, not
+a cleaned-up version of them.
+
+**3. Read [`RULES.md`](RULES.md) Part I, then port the checker closest to the failure you fear.**
+Expect a real run to hurt — ours reported `0 failures, 0 warnings` on a document that ten subsequent
+adversarial passes found defects in.
 
 ---
 
@@ -55,25 +123,8 @@ It targets the failure modes that are specific to that situation:
 - **Not general.** These rules encode *a specific past*. We measured that directly: 37 crafted defects
   were run against our own checkers and **35 passed** — every checker caught faithful replicas of the
   defect it was built from and missed nearly every variation. **Assume the same is true for you.**
-  Expect to add rules; the amendment procedure at the bottom of `RULES.md` tells you how.
+  Expect to add rules; the amendment procedure at the bottom of [`RULES.md`](RULES.md) tells you how.
 - **Not finished.** See the caveats before you trust any of it.
-
----
-
-## Quick start
-
-```bash
-git clone https://github.com/kylefoxaustin/rules-of-engagement
-cd rules-of-engagement
-./build_readme.sh          # regenerates this file's counts from source — see M44
-cat PROMPT.md              # paste this into your agent to start it benchmarking
-```
-
-Then hand `PROMPT.md` to whichever assistant is going to run your benchmarks. It sets the agent's
-working rules before it takes a single measurement, which is the only moment when doing so is cheap.
-
-Run the checkers against a deliverable you already have. **Expect it to hurt** — ours reported
-`0 failures, 0 warnings` on a document that ten subsequent adversarial passes found defects in.
 
 ---
 
@@ -81,14 +132,17 @@ Run the checkers against a deliverable you already have. **Expect it to hurt** �
 
 | path | what it is |
 |---|---|
-| `PROMPT.md` | the starter prompt — paste into your agent |
-| `RULES.md` | 78 rules, each citing the defect that motivated it |
-| `FAILURES.md` | 31 failures, in detail, with how each was caught |
-| `checkers/` | 11 programs that read finished artifacts and refuse to pass them |
-| `harness/` | 20 programs that run at measurement time — gates, porch protocol, samplers |
-| `schema/` | the record format a measurement must satisfy to be quotable |
-| `adversarial/` | how to run the audit, and the passes that beat us |
-| `verify.sh` | the single entry point; runs everything and returns a verdict |
+| [`PROMPT.md`](PROMPT.md) | the starter prompt — paste into your agent |
+| [`FLEET-STANDING-ORDERS.md`](FLEET-STANDING-ORDERS.md) | the one-page law injected at every session start |
+| [`RULES.md`](RULES.md) | 78 rules, each citing the defect that motivated it |
+| [`FAILURES.md`](FAILURES.md) | 31 failures, in detail, with how each was caught |
+| [`checkers/`](checkers) | 11 programs that read finished artifacts and refuse to pass them |
+| [`harness/`](harness) | 20 programs that run at measurement time — gates, porch protocol, samplers |
+| [`schema/`](schema) | the record format a measurement must satisfy to be quotable |
+| [`adversarial/`](adversarial) | how to run the audit, the passes that beat us, and the A/B experiment |
+| [`msg/`](msg) | public review correspondence — outside reviewers' findings and our replies |
+| [`verify.sh`](verify.sh) | runs every checker and every negative control, and returns a verdict |
+| [`build_readme.sh`](build_readme.sh) | regenerates this README's counts from source (M44: never type a count) |
 
 ### The three ideas doing most of the work
 
@@ -133,9 +187,9 @@ bytes.* That is why class 3 needs a different verifier, and why `checkers/prose_
 
 ---
 
----
+## Does it work? We ran the experiment — inconclusive
 
-## Does any of this actually work? We ran the experiment. The answer is "we could not tell."
+We ran the experiment. The answer is "we could not tell."
 
 In August 2026 we ran a pre-registered, blinded A/B test of this harness: 12 matched benchmarking tasks
 across four boards, each done twice — once by an operator given these rules and checkers, once by an
@@ -159,7 +213,7 @@ underpowered test is not evidence of absence. What we can say is that on small, 
 competent operators produced few defects either way, and this harness cost 2.4× the effort with no
 demonstrated benefit *at that scale of task*.
 
-**Read `adversarial/AB_EXPERIMENT.md` for the full result, including the three protocol failures we
+**Read [`adversarial/AB_EXPERIMENT.md`](adversarial/AB_EXPERIMENT.md) for the full result, including the three protocol failures we
 committed while running it** — an invented identifier, a mid-experiment protocol deviation that biased
 toward our own hypothesis, and an entire arm we lost for four hours. All three were caught by
 mechanisms, none by attention. That is the most honest argument for mechanising this that we have.
@@ -183,28 +237,16 @@ yet cover.
 - **Fixing is a leading source of defects.** Across our first seven audit passes, **29% of findings
   were introduced by the previous fix**. Late in a review, a cosmetic fix is a bad bet. We shipped with
   two known-MINOR wording issues on exactly those odds.
-- **Paths are not portable.** Several harness programs carry absolute paths and SDK locations from the
-  machine they were written on. They are here as method, not as a turnkey install.
+- **Paths are not portable.** Several harness *and checker* programs carry paths and SDK locations
+  from the campaign they were written in (see `HERE` / `BENCH` at the top of each file). They are here
+  as method, not as a turnkey install: what runs anywhere is each checker's negative control.
+- **`RULES.md` names checkers that are not published.** Each rule's `CHECK` line names the tool in the
+  campaign tree it was written in (`tools/…`). The ones published here live in `checkers/`; several
+  are not published at all, and the rule is the part to keep.
 - **The counts in this README are generated** by `build_readme.sh`. If you edit them by hand you have
   reintroduced the bug the file warns you about — ours rotted within an hour of being quoted.
 
 ---
-
-## Fleet standing orders — the short version, for your agents' session start
-
-[`FLEET-STANDING-ORDERS.md`](FLEET-STANDING-ORDERS.md) is the condensed law that every AI session in
-the fleet that produced this repo is handed at the start of each session, verbatim. Two laws:
-
-1. **Every number carries a provenance tag** — MEASURED / DERIVED / SOURCED — and **a DERIVED or
-   SOURCED number is never compared against a MEASURED one.**
-2. **Honor the reservation, clean up after yourself** — hard-lock a shared board or don't run, and
-   prove at release that you left nothing behind.
-
-`RULES.md` is the full corpus and the why; this file is what fits in an agent's context every time.
-To use it, inject it into your agents' session-start context (for Claude Code, a `SessionStart`
-hook that prints it as `additionalContext`) and edit it to fit your fleet. The copy here is kept
-byte-identical to the one the fleet actually runs, so it is a record of the real rules, not a
-cleaned-up version of them.
 
 ## Contributing
 
@@ -213,6 +255,9 @@ hardware, open an issue with the artifact and how it was eventually caught. `RUL
 finding a new way to be wrong — adding a rule requires citing the defect that motivated it, with
 evidence. Rules are removed only when the failure mode has become structurally impossible.
 
+If you change `RULES.md`, `checkers/` or `harness/`, run `./build_readme.sh` and commit the
+regenerated `README.md` — it refuses to render if the rule IDs are not a contiguous, unique M1..MN.
+
 ## Licence
 
-MIT. See `LICENSE`.
+MIT — see [`LICENSE`](LICENSE).
