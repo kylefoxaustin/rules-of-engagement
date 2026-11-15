@@ -384,7 +384,8 @@ Same morning, same root cause. `kill -9` on `qnn-net-run` processes holding fast
 in uninterruptible sleep (`D` state, where SIGKILL is inert) and left the Hexagon glink channel wedged:
 `glink-edge: intent request timed out` every 10 s, `fastrpc:compute-cb@2: unmmap pt fd = 24 error`.
 The board then ran **24× slow** while still returning plausible-looking numbers, and recovery required
-a `remoteproc` stop/start. Two of my three measurement disasters this week began with a `kill -9`.
+a **physical power cycle**: with processes in `D`, a `remoteproc` stop/start fails and a reboot hangs.
+Two of my three measurement disasters this week began with a `kill -9`.
 
 > **CHECK:** teardown sends SIGTERM and waits. Escalation to SIGKILL requires first confirming the
 > process is not in `D` state; if it is, the device — not the process — is what needs resetting.
